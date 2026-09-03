@@ -85,6 +85,7 @@
   .tb-btn:disabled{ opacity:.4; cursor:not-allowed; }
   .tb-btn.record{ color:var(--danger); border-color:var(--danger); }
   .tb-btn.record.active{ background:var(--danger); color:#1a1010; animation:pulse 1.1s infinite; }
+  .tb-btn.active{ background:var(--accent); color:#1a1510; border-color:var(--accent); }
   @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:.55;} }
   .tb-select{
     background:var(--panel-raised); border:1px solid var(--line); color:var(--text);
@@ -309,6 +310,48 @@
   .board-controls{ margin-top:16px; border-top:1px solid var(--line-soft); padding-top:14px; }
   .board-empty{ color:var(--text-faint); font-size:13px; padding:20px 0; text-align:center; }
 
+  #timelineSection{
+    display:none; flex-direction:column; border-bottom:1px solid var(--line); background:var(--panel);
+    flex:0 0 auto; max-height:38vh; min-height:160px;
+  }
+  #timelineScroll{ flex:1; overflow:auto; position:relative; min-height:0; }
+  #timelineRuler{
+    height:20px; background:var(--panel-recessed); position:sticky; top:0; z-index:5;
+    border-bottom:1px solid var(--line-soft); position:relative;
+  }
+  #timelineRuler .tick{
+    position:absolute; top:0; bottom:0; border-left:1px solid var(--line-soft);
+    font-size:9px; color:var(--text-faint); padding-left:3px; line-height:20px; font-family:var(--mono);
+  }
+  #timelineTracks{ position:relative; }
+  .tl-lane{
+    display:flex; align-items:stretch; border-bottom:1px solid var(--line-soft); min-height:54px; position:relative;
+  }
+  .tl-lane__label{
+    flex:0 0 92px; display:flex; align-items:center; padding:0 8px; font-size:11px; color:var(--text-dim);
+    background:var(--panel); position:sticky; left:0; z-index:4; border-right:1px solid var(--line-soft);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .tl-lane__body{ position:relative; flex:1; background:var(--panel-recessed); }
+  .tl-clip{
+    position:absolute; top:5px; bottom:5px; background:var(--panel-raised); border:1px solid var(--accent-dim);
+    border-radius:4px; overflow:hidden; cursor:grab; min-width:6px;
+  }
+  .tl-clip.selected{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .tl-clip canvas{ width:100%; height:100%; display:block; pointer-events:none; }
+  .tl-clip__handle{ position:absolute; top:0; bottom:0; width:9px; cursor:ew-resize; z-index:2; }
+  .tl-clip__handle--l{ left:0; }
+  .tl-clip__handle--r{ right:0; }
+  .tl-playhead{
+    position:absolute; top:0; bottom:0; width:2px; background:var(--danger); z-index:6; pointer-events:none;
+  }
+  #clipControls{
+    display:none; align-items:center; gap:14px; padding:8px 14px; border-top:1px solid var(--line-soft);
+    background:var(--panel); flex:0 0 auto;
+  }
+  #clipControls.open{ display:flex; }
+  .tl-empty{ color:var(--text-faint); font-size:12.5px; padding:16px; }
+
   @media (max-width:480px){
     .strip{ flex:0 0 100px; }
     .strip.master{ flex:0 0 116px; }
@@ -338,7 +381,9 @@
       <select id="outputSelect" class="tb-select"><option>System default</option></select>
     </div>
     <button class="tb-btn" id="addTrackBtn">+ Track</button>
+    <button class="tb-btn" id="playBtn">&#9654; Play</button>
     <button class="tb-btn record" id="recordBtn">● Record</button>
+    <button class="tb-btn" id="mixerToggleBtn">Mixer</button>
     <button class="tb-btn" id="recordingsToggle">Recordings <span id="recCount"></span></button>
     <button class="tb-btn" id="boardBtn">Board</button>
     <button class="tb-btn" id="saveProjectBtn">Save project</button>
@@ -350,6 +395,19 @@
   <div id="recordings">
     <h2>Recordings</h2>
     <div id="recordingsList"></div>
+  </div>
+
+  <div id="timelineSection" style="display:none;">
+    <div id="timelineScroll">
+      <div id="timelineRuler"></div>
+      <div id="timelineTracks"></div>
+    </div>
+    <div id="clipControls">
+      <span id="clipControlsLabel" style="font-size:12px; color:var(--text-dim);"></span>
+      <div class="fx-param"><label>Fade in</label><input type="range" id="clipFadeIn" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="clipFadeInVal">0ms</div></div>
+      <div class="fx-param"><label>Fade out</label><input type="range" id="clipFadeOut" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="clipFadeOutVal">0ms</div></div>
+      <button class="tb-btn" id="clipDeleteBtn" style="margin-left:auto;">Delete clip</button>
+    </div>
   </div>
 
   <div id="console" style="display:none;">
@@ -617,6 +675,10 @@ const Engine = {
   tracks: [],
   trackSeq: 0,
   sessionSeq: 0,
+  clipSeq: 0,
+  transport: { playing:false, playStartCtxTime:0, playStartPosition:0 },
+  _scheduledSources: [],
+  _recordStartPlayhead: 0,
   recording: false,
   activeRecorders: [], // {node, kind, name, channelCount}
   finishedChunks: null, // Map key -> array of {channels:[Float32Array...]}
@@ -746,11 +808,80 @@ const Engine = {
     }
   },
 
+  /* ---- Transport: plays back clips already placed on each track's timeline ---- */
+  getPlayheadPosition(){
+    if(!this.transport.playing) return this.transport.playStartPosition;
+    return this.transport.playStartPosition + (this.ctx.currentTime - this.transport.playStartCtxTime);
+  },
+
+  transportPlay(){
+    if(this.transport.playing) return;
+    const startPos = this.transport.playStartPosition;
+    this.transport.playing = true;
+    this.transport.playStartCtxTime = this.ctx.currentTime;
+    this._scheduledSources = [];
+    for(const track of this.tracks){
+      for(const clip of track.clips){
+        const clipEnd = clip.startTime + clip.duration;
+        if(clipEnd <= startPos) continue; // already past, nothing to play
+        const intoClip = Math.max(0, startPos - clip.startTime); // how far into the *visible* (trimmed) clip we're starting
+        const remaining = clip.duration - intoClip;
+        if(remaining <= 0) continue;
+        const when = clip.startTime >= startPos ? this.ctx.currentTime + (clip.startTime - startPos) : this.ctx.currentTime;
+        const bufferOffset = (clip._trimHead||0) + intoClip; // where in the underlying buffer that point actually is
+        const src = this.ctx.createBufferSource();
+        src.buffer = clip.buffer;
+        const g = this.ctx.createGain();
+        const fadeIn = Math.min(clip.fadeIn||0, remaining/2);
+        const fadeOut = Math.min(clip.fadeOut||0, remaining/2);
+        // Only apply the fade-in if we're starting at the true beginning of the clip;
+        // scrubbing into the middle of a clip should not re-trigger its fade-in.
+        if(intoClip===0 && fadeIn>0){
+          g.gain.setValueAtTime(0, when);
+          g.gain.linearRampToValueAtTime(1, when+fadeIn);
+        }else{
+          g.gain.setValueAtTime(1, when);
+        }
+        if(fadeOut>0){
+          const fadeOutStart = when + Math.max(0, remaining-fadeOut);
+          g.gain.setValueAtTime(g.gain.value, fadeOutStart);
+          g.gain.linearRampToValueAtTime(0, when+remaining);
+        }
+        src.connect(g); g.connect(track.nodes.muteGain);
+        // duration param caps playback so a right-trimmed clip doesn't keep playing past its trimmed length
+        src.start(when, bufferOffset, remaining);
+        this._scheduledSources.push(src);
+      }
+    }
+    UI.startPlayheadAnimation();
+  },
+
+  transportStop(){
+    if(!this.transport.playing) return;
+    const elapsed = this.ctx.currentTime - this.transport.playStartCtxTime;
+    this.transport.playStartPosition += elapsed;
+    this.transport.playing = false;
+    for(const src of this._scheduledSources){ try{ src.stop(); }catch(e){} }
+    this._scheduledSources = [];
+    UI.stopPlayheadAnimation();
+  },
+
+  transportSeek(pos){
+    const wasPlaying = this.transport.playing;
+    if(wasPlaying) this.transportStop();
+    this.transport.playStartPosition = Math.max(0,pos);
+    if(wasPlaying) this.transportPlay();
+    UI.updatePlayheadNow();
+  },
+
   async startRecording(){
     const armed = this.tracks.filter(t=>t.armed && t.hasInput);
     if(armed.length===0){
       return { ok:false, msg:'Arm at least one track (with an input selected) before recording.' };
     }
+    this._recordStartPlayhead = this.getPlayheadPosition();
+    if(!this.transport.playing) this.transportPlay(); // hear existing clips while recording (overdub)
+
     this.finishedChunks = new Map();
     this.activeRecorders = [];
 
@@ -791,6 +922,7 @@ const Engine = {
       r.node.port.postMessage({ cmd:'stop' });
     }
     this.recording = false;
+    this.transportStop();
   },
 
   _recorderStopped(key){
@@ -820,11 +952,25 @@ const Engine = {
       if(flatChannels[0] && flatChannels[0].length>0){
         const blob = encodeWAV(flatChannels, this.ctx.sampleRate);
         results.push({ name: rec.name, blob, url: URL.createObjectURL(blob), frames: flatChannels[0].length, sessionId });
+
+        if(key.startsWith('track:')){
+          const trackId = key.slice('track:'.length);
+          const track = this.tracks.find(t=>t.id===trackId);
+          if(track){
+            const audioBuf = this.ctx.createBuffer(flatChannels.length, flatChannels[0].length, this.ctx.sampleRate);
+            for(let ch=0; ch<flatChannels.length; ch++) audioBuf.copyToChannel(flatChannels[ch], ch);
+            track.clips.push({
+              id: 'clip'+(++this.clipSeq), buffer: audioBuf,
+              startTime: this._recordStartPlayhead, duration: audioBuf.duration, fadeIn:0, fadeOut:0
+            });
+          }
+        }
       }
     }
     this.activeRecorders = [];
     this.finishedChunks = null;
     UI.onRecordingsReady(results);
+    UI.renderTimeline();
   }
 };
 
@@ -849,6 +995,7 @@ class Track{
       comp: { enabled:false, thresholdDb:-20, ratio:4, attack:0.01, release:0.25 },
       delay: { enabled:false, timeMs:300, feedback:0.3, mix:0.35 }
     };
+    this.clips = []; // timeline clips: { id, buffer, startTime, duration, fadeIn, fadeOut }
 
     const ctx = engine.ctx;
     const n = this.nodes = {};
@@ -1109,6 +1256,8 @@ class Track{
 }
 
 /* ============================== UI ============================== */
+const TL_PX_PER_SEC = 40;
+const TL_LABEL_WIDTH = 92;
 const UI = {
   els: {},
 
@@ -1180,6 +1329,22 @@ const UI = {
     this._boardSelection = new Set();
     this._wireBoardControls();
 
+    this.els.playBtn = document.getElementById('playBtn');
+    this.els.mixerToggleBtn = document.getElementById('mixerToggleBtn');
+    this.els.timelineSection = document.getElementById('timelineSection');
+    this.els.timelineScroll = document.getElementById('timelineScroll');
+    this.els.timelineRuler = document.getElementById('timelineRuler');
+    this.els.timelineTracks = document.getElementById('timelineTracks');
+    this.els.clipControls = document.getElementById('clipControls');
+    this.els.clipControlsLabel = document.getElementById('clipControlsLabel');
+    this.els.clipFadeIn = document.getElementById('clipFadeIn');
+    this.els.clipFadeInVal = document.getElementById('clipFadeInVal');
+    this.els.clipFadeOut = document.getElementById('clipFadeOut');
+    this.els.clipFadeOutVal = document.getElementById('clipFadeOutVal');
+    this.els.clipDeleteBtn = document.getElementById('clipDeleteBtn');
+    this._wireTransport();
+    this._wireClipControls();
+
     this.els.powerBtn.onclick = ()=>this.powerOn();
     this.els.addTrackBtn.onclick = ()=>this.addTrack();
     this.els.emptyAddTrack.onclick = ()=>this.addTrack();
@@ -1218,6 +1383,8 @@ const UI = {
     this.els.splash.classList.add('hidden');
     this.els.topbar.style.display = 'flex';
     this.els.consoleEl.style.display = 'flex';
+    this.els.timelineSection.style.display = 'flex';
+    this.els.mixerToggleBtn.classList.add('active');
     this._buildMasterStrip();
     this._populateOutputs();
     this._populateInterfaceOptions();
@@ -1227,6 +1394,7 @@ const UI = {
     }
     this.addTrack();
     this._startMeterLoop();
+    this.renderTimeline();
     document.addEventListener('visibilitychange', ()=>{
       this._meterActive = document.visibilityState === 'visible';
     });
@@ -1290,12 +1458,14 @@ const UI = {
     this.els.strips.appendChild(t.el);
     t.populateChannelOptions();
     this._syncEmptyState();
+    this.renderTimeline();
   },
 
   confirmRemoveTrack(track){
     if(Engine.recording){ alert('Stop recording before removing a track.'); return; }
     Engine.removeTrack(track);
     this._syncEmptyState();
+    this.renderTimeline();
   },
 
   _syncEmptyState(){
@@ -1396,6 +1566,7 @@ const UI = {
 
     if(data.master && this.masterFaderControl) this.masterFaderControl.setValue(data.master.faderDb||0);
 
+    this.renderTimeline();
     alert('Project loaded.'+ifaceMsg);
   },
 
@@ -1713,6 +1884,214 @@ const UI = {
     this.els.boardOverlay.onclick = (e)=>{ if(e.target===this.els.boardOverlay){ this._stopSessionPlayback(); this.els.boardOverlay.classList.remove('open'); } };
   },
 
+  /* ---- Transport & Timeline ---- */
+  _wireTransport(){
+    this.els.playBtn.onclick = ()=>{
+      if(Engine.transport.playing) Engine.transportStop();
+      else Engine.transportPlay();
+      this._syncTransportButtons();
+    };
+    this.els.mixerToggleBtn.onclick = ()=>{
+      const showing = this.els.consoleEl.style.display !== 'none';
+      this.els.consoleEl.style.display = showing ? 'none' : 'flex';
+      this.els.mixerToggleBtn.classList.toggle('active', !showing);
+    };
+    this.els.timelineRuler.addEventListener('click', (e)=>{
+      const rect = this.els.timelineRuler.getBoundingClientRect();
+      const seconds = (e.clientX - rect.left) / TL_PX_PER_SEC;
+      Engine.transportSeek(Math.max(0,seconds));
+      this._syncTransportButtons();
+    });
+  },
+
+  _syncTransportButtons(){
+    const playing = Engine.transport.playing;
+    this.els.playBtn.textContent = playing ? '\u25a0 Stop' : '\u25b6 Play';
+    this.els.playBtn.classList.toggle('active', playing);
+    this.els.recordBtn.classList.toggle('active', Engine.recording);
+  },
+
+  startPlayheadAnimation(){
+    this._syncTransportButtons();
+    if(this._playheadRAF) return;
+    const loop = ()=>{
+      this.updatePlayheadNow();
+      if(Engine.transport.playing) this._playheadRAF = requestAnimationFrame(loop);
+      else this._playheadRAF = null;
+    };
+    this._playheadRAF = requestAnimationFrame(loop);
+  },
+
+  stopPlayheadAnimation(){
+    this._syncTransportButtons();
+    if(this._playheadRAF){ cancelAnimationFrame(this._playheadRAF); this._playheadRAF=null; }
+    this.updatePlayheadNow();
+  },
+
+  updatePlayheadNow(){
+    const pos = Engine.getPlayheadPosition();
+    const el = document.getElementById('tlPlayheadEl');
+    if(el) el.style.left = (TL_LABEL_WIDTH + pos*TL_PX_PER_SEC)+'px';
+  },
+
+  _formatTime(s){
+    const m = Math.floor(s/60);
+    const sec = Math.floor(s%60);
+    return m+':'+String(sec).padStart(2,'0');
+  },
+
+  renderTimeline(){
+    const tracksWrap = this.els.timelineTracks;
+    tracksWrap.innerHTML = '';
+    this.els.timelineRuler.innerHTML = '';
+    if(Engine.tracks.length===0){
+      tracksWrap.innerHTML = '<div class="tl-empty">Add a track to start recording onto the timeline.</div>';
+      return;
+    }
+    let maxEnd = 30;
+    for(const t of Engine.tracks){
+      for(const c of t.clips){ const end=c.startTime+c.duration; if(end>maxEnd) maxEnd=end; }
+    }
+    const widthPx = Math.ceil((maxEnd+10) * TL_PX_PER_SEC);
+    this.els.timelineRuler.style.width = (TL_LABEL_WIDTH+widthPx)+'px';
+
+    for(let s=0; s*5<=maxEnd+10; s++){
+      const t = s*5;
+      const tick = document.createElement('div');
+      tick.className = 'tick';
+      tick.style.left = (TL_LABEL_WIDTH + t*TL_PX_PER_SEC)+'px';
+      tick.textContent = this._formatTime(t);
+      this.els.timelineRuler.appendChild(tick);
+    }
+
+    for(const track of Engine.tracks){
+      const lane = document.createElement('div');
+      lane.className = 'tl-lane';
+      const label = document.createElement('div');
+      label.className = 'tl-lane__label';
+      label.textContent = track.name;
+      const body = document.createElement('div');
+      body.className = 'tl-lane__body';
+      body.style.width = widthPx+'px';
+      for(const clip of track.clips) body.appendChild(this._buildTimelineClip(track, clip));
+      lane.appendChild(label);
+      lane.appendChild(body);
+      tracksWrap.appendChild(lane);
+    }
+
+    const playhead = document.createElement('div');
+    playhead.className = 'tl-playhead';
+    playhead.id = 'tlPlayheadEl';
+    playhead.style.left = (TL_LABEL_WIDTH + Engine.getPlayheadPosition()*TL_PX_PER_SEC)+'px';
+    tracksWrap.appendChild(playhead);
+  },
+
+  _buildTimelineClip(track, clip){
+    const el = document.createElement('div');
+    el.className = 'tl-clip';
+    el.style.left = (clip.startTime*TL_PX_PER_SEC)+'px';
+    el.style.width = Math.max(6, clip.duration*TL_PX_PER_SEC)+'px';
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(20, Math.round(clip.duration*TL_PX_PER_SEC));
+    canvas.height = 44;
+    el.appendChild(canvas);
+    const hL = document.createElement('div'); hL.className = 'tl-clip__handle tl-clip__handle--l';
+    const hR = document.createElement('div'); hR.className = 'tl-clip__handle tl-clip__handle--r';
+    el.appendChild(hL); el.appendChild(hR);
+
+    const peaks = computePeaks(clip.buffer.getChannelData(0), canvas.width);
+    drawWaveform(canvas, peaks, 0, 1, []);
+
+    if(this._selectedClip && this._selectedClip.id===clip.id) el.classList.add('selected');
+
+    this._wireClipDrag(el, track, clip, hL, hR);
+    return el;
+  },
+
+  _selectClip(track, clip, el){
+    const prevEl = this.els.timelineTracks.querySelector('.tl-clip.selected');
+    if(prevEl) prevEl.classList.remove('selected');
+    el.classList.add('selected');
+    this._selectedClip = clip;
+    this._selectedTrack = track;
+    this.els.clipControls.classList.add('open');
+    this.els.clipControlsLabel.textContent = track.name + ' clip';
+    const fiMs = Math.round((clip.fadeIn||0)*1000), foMs = Math.round((clip.fadeOut||0)*1000);
+    this.els.clipFadeIn.value = fiMs; this.els.clipFadeInVal.textContent = fiMs+'ms';
+    this.els.clipFadeOut.value = foMs; this.els.clipFadeOutVal.textContent = foMs+'ms';
+  },
+
+  _wireClipControls(){
+    this.els.clipFadeIn.oninput = (e)=>{
+      if(!this._selectedClip) return;
+      const ms = parseFloat(e.target.value);
+      this.els.clipFadeInVal.textContent = ms+'ms';
+      this._selectedClip.fadeIn = ms/1000;
+    };
+    this.els.clipFadeOut.oninput = (e)=>{
+      if(!this._selectedClip) return;
+      const ms = parseFloat(e.target.value);
+      this.els.clipFadeOutVal.textContent = ms+'ms';
+      this._selectedClip.fadeOut = ms/1000;
+    };
+    this.els.clipDeleteBtn.onclick = ()=>{
+      if(!this._selectedTrack || !this._selectedClip) return;
+      this._selectedTrack.clips = this._selectedTrack.clips.filter(c=>c!==this._selectedClip);
+      this._selectedClip = null; this._selectedTrack = null;
+      this.els.clipControls.classList.remove('open');
+      this.renderTimeline();
+    };
+  },
+
+  _wireClipDrag(el, track, clip, hL, hR){
+    const MIN_DUR = 0.05;
+    let mode = null, startX = 0, startClipStart = 0, startClipDur = 0, startTrimHead = 0;
+
+    const onMove = (e)=>{
+      if(!mode) return;
+      const deltaSec = (e.clientX-startX)/TL_PX_PER_SEC;
+      if(mode==='move'){
+        clip.startTime = Math.max(0, startClipStart+deltaSec);
+        el.style.left = (clip.startTime*TL_PX_PER_SEC)+'px';
+      }else if(mode==='resize-l'){
+        const maxDelta = startClipDur - MIN_DUR;
+        const clamped = Math.max(-startClipStart, Math.min(deltaSec, maxDelta));
+        clip.startTime = startClipStart + clamped;
+        clip.duration = startClipDur - clamped;
+        clip._trimHead = startTrimHead + clamped;
+        el.style.left = (clip.startTime*TL_PX_PER_SEC)+'px';
+        el.style.width = Math.max(6, clip.duration*TL_PX_PER_SEC)+'px';
+      }else if(mode==='resize-r'){
+        const maxDur = clip.buffer.duration - (clip._trimHead||0);
+        clip.duration = Math.max(MIN_DUR, Math.min(startClipDur+deltaSec, maxDur));
+        el.style.width = Math.max(6, clip.duration*TL_PX_PER_SEC)+'px';
+      }
+    };
+    const onUp = ()=>{
+      mode = null;
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+    const startDrag = (which, e)=>{
+      e.stopPropagation();
+      mode = which;
+      startX = e.clientX;
+      startClipStart = clip.startTime;
+      startClipDur = clip.duration;
+      startTrimHead = clip._trimHead||0;
+      this._selectClip(track, clip, el);
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    };
+    el.addEventListener('pointerdown', (e)=>{
+      if(e.target===hL || e.target===hR) return;
+      startDrag('move', e);
+    });
+    hL.addEventListener('pointerdown', (e)=> startDrag('resize-l', e));
+    hR.addEventListener('pointerdown', (e)=> startDrag('resize-r', e));
+  },
+
+  /* ---- Editing Board (multi-clip picker, popup) ---- */
   async _toggleSessionPlayback(sessionId, recs, btnEl){
     if(this._sessionPlaybackSources && this._sessionPlaybackSources.length){
       const wasThisSession = this._sessionPlaybackBtn === btnEl;
@@ -2029,12 +2408,14 @@ const UI = {
       this.els.recordBtn.disabled = true;
       this.els.recordBtn.textContent = 'Finishing\u2026';
       await Engine.stopRecording();
+      this._syncTransportButtons();
       return;
     }
     const res = await Engine.startRecording();
     if(!res.ok){ alert(res.msg); return; }
     this.els.recordBtn.textContent = '\u25a0 Stop';
     this.els.recordBtn.classList.add('active');
+    this._syncTransportButtons();
   }
 };
 
