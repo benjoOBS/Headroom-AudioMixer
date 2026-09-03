@@ -224,16 +224,16 @@
   }
   .strip__fx-btn.active{ color:var(--accent); }
 
-  #fxOverlay, #editOverlay{
+  #fxOverlay, #editOverlay, #boardOverlay{
     position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:60;
     display:none; align-items:center; justify-content:center; padding:16px;
   }
-  #fxOverlay.open, #editOverlay.open{ display:flex; }
-  #fxPanel, #editPanel{
+  #fxOverlay.open, #editOverlay.open, #boardOverlay.open{ display:flex; }
+  #fxPanel, #editPanel, #boardPanel{
     background:var(--panel); border:1px solid var(--line); border-radius:10px;
     width:100%; max-width:420px; max-height:85vh; overflow-y:auto; padding:16px;
   }
-  #fxPanel h2, #editPanel h2{ margin:0; font-size:16px; padding-right:24px; }
+  #fxPanel h2, #editPanel h2, #boardPanel h2{ margin:0; font-size:16px; padding-right:24px; }
   .fx-close{
     float:right; background:none; border:none; color:var(--text-faint); font-size:20px; cursor:pointer; line-height:1;
   }
@@ -278,6 +278,25 @@
   .edit-actions .tb-btn{ flex:0 0 auto; }
   .edit-actions .tb-btn.record{ margin-left:auto; }
 
+  #boardPanel{ max-width:720px; }
+  .board-session{ margin-bottom:18px; }
+  .board-session__head{
+    font-size:11px; color:var(--text-faint); margin-bottom:6px; padding-bottom:4px; border-bottom:1px solid var(--line-soft);
+  }
+  .board-row{
+    display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:6px; cursor:pointer;
+    border:1px solid transparent; user-select:none;
+  }
+  .board-row:hover{ background:var(--panel-raised); }
+  .board-row.selected{ border-color:var(--accent); background:rgba(224,165,68,0.12); }
+  .board-row__label{
+    width:110px; flex:0 0 auto; font-size:12px; color:var(--text-dim); overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap;
+  }
+  .board-row__wave{ flex:1; height:36px; background:var(--panel-recessed); border-radius:4px; width:100%; }
+  .board-controls{ margin-top:16px; border-top:1px solid var(--line-soft); padding-top:14px; }
+  .board-empty{ color:var(--text-faint); font-size:13px; padding:20px 0; text-align:center; }
+
   @media (max-width:480px){
     .strip{ flex:0 0 100px; }
     .strip.master{ flex:0 0 116px; }
@@ -308,6 +327,7 @@
     <button class="tb-btn" id="addTrackBtn">+ Track</button>
     <button class="tb-btn record" id="recordBtn">● Record</button>
     <button class="tb-btn" id="recordingsToggle">Recordings <span id="recCount"></span></button>
+    <button class="tb-btn" id="boardBtn">Board</button>
     <button class="tb-btn" id="saveProjectBtn">Save project</button>
     <button class="tb-btn" id="loadProjectBtn">Load project</button>
     <input type="file" id="loadProjectInput" accept="application/json,.json" style="display:none;">
@@ -355,6 +375,26 @@
         <button class="tb-btn" id="editPreviewBtn">&#9654; Preview</button>
         <button class="tb-btn" id="editClearMarkersBtn">Clear splits</button>
         <button class="tb-btn record" id="editExportBtn">Export</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="boardOverlay">
+    <div id="boardPanel">
+      <button class="fx-close" id="boardClose">&times;</button>
+      <h2>Editing Board</h2>
+      <div id="boardSessions"></div>
+      <div class="board-controls">
+        <div class="fx-params">
+          <div class="fx-param"><label>Trim start</label><input type="range" id="boardTrimStart" min="0" max="100" step="1" value="0"><div class="fx-param-val" id="boardTrimStartVal">0%</div></div>
+          <div class="fx-param"><label>Trim end</label><input type="range" id="boardTrimEnd" min="0" max="100" step="1" value="100"><div class="fx-param-val" id="boardTrimEndVal">100%</div></div>
+          <div class="fx-param"><label>Fade in</label><input type="range" id="boardFadeIn" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="boardFadeInVal">0ms</div></div>
+          <div class="fx-param"><label>Fade out</label><input type="range" id="boardFadeOut" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="boardFadeOutVal">0ms</div></div>
+        </div>
+        <div class="edit-actions">
+          <span id="boardSelCount" style="font-size:11px; color:var(--text-faint); align-self:center;">0 selected</span>
+          <button class="tb-btn record" id="boardExportBtn" style="margin-left:auto;">Export selected</button>
+        </div>
       </div>
     </div>
   </div>
@@ -563,6 +603,7 @@ const Engine = {
   interface: null, // { deviceId, stream, sourceNode, splitterNode, channelCount, label }
   tracks: [],
   trackSeq: 0,
+  sessionSeq: 0,
   recording: false,
   activeRecorders: [], // {node, kind, name, channelCount}
   finishedChunks: null, // Map key -> array of {channels:[Float32Array...]}
@@ -749,6 +790,7 @@ const Engine = {
   },
 
   _finalizeRecordings(){
+    const sessionId = ++this.sessionSeq;
     const results = [];
     for(const [key, rec] of this.finishedChunks.entries()){
       const flatChannels = rec.channels.map(chunkList=>{
@@ -761,7 +803,7 @@ const Engine = {
       });
       if(flatChannels[0] && flatChannels[0].length>0){
         const blob = encodeWAV(flatChannels, this.ctx.sampleRate);
-        results.push({ name: rec.name, blob, url: URL.createObjectURL(blob), frames: flatChannels[0].length });
+        results.push({ name: rec.name, blob, url: URL.createObjectURL(blob), frames: flatChannels[0].length, sessionId });
       }
     }
     this.activeRecorders = [];
@@ -1081,10 +1123,29 @@ const UI = {
     this.els.editPreviewBtn = document.getElementById('editPreviewBtn');
     this.els.editClearMarkersBtn = document.getElementById('editClearMarkersBtn');
     this.els.editExportBtn = document.getElementById('editExportBtn');
-    this.els.editClose.onclick = ()=> this.els.editOverlay.classList.remove('open');
-    this.els.editOverlay.onclick = (e)=>{ if(e.target===this.els.editOverlay) this.els.editOverlay.classList.remove('open'); };
+    this.els.editClose.onclick = ()=>{ this._stopPreview(); this.els.editOverlay.classList.remove('open'); };
+    this.els.editOverlay.onclick = (e)=>{ if(e.target===this.els.editOverlay){ this._stopPreview(); this.els.editOverlay.classList.remove('open'); } };
     this._wireEditHandles();
     this._wireEditControls();
+
+    this.els.boardBtn = document.getElementById('boardBtn');
+    this.els.boardOverlay = document.getElementById('boardOverlay');
+    this.els.boardPanel = document.getElementById('boardPanel');
+    this.els.boardClose = document.getElementById('boardClose');
+    this.els.boardSessions = document.getElementById('boardSessions');
+    this.els.boardTrimStart = document.getElementById('boardTrimStart');
+    this.els.boardTrimStartVal = document.getElementById('boardTrimStartVal');
+    this.els.boardTrimEnd = document.getElementById('boardTrimEnd');
+    this.els.boardTrimEndVal = document.getElementById('boardTrimEndVal');
+    this.els.boardFadeIn = document.getElementById('boardFadeIn');
+    this.els.boardFadeInVal = document.getElementById('boardFadeInVal');
+    this.els.boardFadeOut = document.getElementById('boardFadeOut');
+    this.els.boardFadeOutVal = document.getElementById('boardFadeOutVal');
+    this.els.boardSelCount = document.getElementById('boardSelCount');
+    this.els.boardExportBtn = document.getElementById('boardExportBtn');
+    this.els.boardBtn.onclick = ()=> this.openBoard();
+    this._boardSelection = new Set();
+    this._wireBoardControls();
 
     this.els.powerBtn.onclick = ()=>this.powerOn();
     this.els.addTrackBtn.onclick = ()=>this.addTrack();
@@ -1503,6 +1564,7 @@ const UI = {
   },
 
   _previewEdit(){
+    if(this._previewSource){ this._stopPreview(); return; }
     const st = this._editState;
     if(!st) return;
     const buf = st.recording.decodedBuffer;
@@ -1527,7 +1589,20 @@ const UI = {
     g.gain.setValueAtTime(1, now+Math.max(fadeIn, dur-fadeOut));
     g.gain.linearRampToValueAtTime(0, now+dur);
     src.connect(g); g.connect(Engine.masterGain);
+    src.onended = ()=>{
+      if(this._previewSource===src){ this._previewSource=null; this.els.editPreviewBtn.textContent='\u25b6 Preview'; }
+    };
     src.start();
+    this._previewSource = src;
+    this.els.editPreviewBtn.textContent = '\u25a0 Stop';
+  },
+
+  _stopPreview(){
+    if(this._previewSource){
+      try{ this._previewSource.onended=null; this._previewSource.stop(); }catch(e){}
+      this._previewSource = null;
+    }
+    this.els.editPreviewBtn.textContent = '\u25b6 Preview';
   },
 
   _exportEdit(){
@@ -1561,7 +1636,144 @@ const UI = {
       results.push({ name: st.recording.name+suffix, blob, url:URL.createObjectURL(blob), frames: segChannels[0].length });
     }
     this.onRecordingsReady(results);
+    this._stopPreview();
     this.els.editOverlay.classList.remove('open');
+  },
+
+  /* ---- Editing Board: multi-select batch trim/fade across tracks from the same session ---- */
+  openBoard(){
+    this._renderBoard();
+    this.els.boardOverlay.classList.add('open');
+  },
+
+  _wireBoardControls(){
+    this.els.boardTrimStart.oninput = (e)=>{ this.els.boardTrimStartVal.textContent = e.target.value+'%'; };
+    this.els.boardTrimEnd.oninput = (e)=>{ this.els.boardTrimEndVal.textContent = e.target.value+'%'; };
+    this.els.boardFadeIn.oninput = (e)=>{ this.els.boardFadeInVal.textContent = e.target.value+'ms'; };
+    this.els.boardFadeOut.oninput = (e)=>{ this.els.boardFadeOutVal.textContent = e.target.value+'ms'; };
+    this.els.boardExportBtn.onclick = ()=> this._exportBoardSelection();
+    this.els.boardClose.onclick = ()=> this.els.boardOverlay.classList.remove('open');
+    this.els.boardOverlay.onclick = (e)=>{ if(e.target===this.els.boardOverlay) this.els.boardOverlay.classList.remove('open'); };
+  },
+
+  _renderBoard(){
+    const wrap = this.els.boardSessions;
+    wrap.innerHTML = '';
+    this._boardSelection = new Set();
+    this._boardLastClickedIndex = null;
+    this._updateBoardSelectionCount();
+
+    if(this._recordings.length===0){
+      wrap.innerHTML = '<div class="board-empty">No recordings yet \u2014 record something first, then come back here to batch-edit.</div>';
+      return;
+    }
+
+    const sessions = new Map();
+    for(const r of this._recordings){
+      if(!sessions.has(r.sessionId)) sessions.set(r.sessionId, []);
+      sessions.get(r.sessionId).push(r);
+    }
+    this._boardFlatList = [];
+    let flatIndex = 0;
+    for(const [sessionId, recs] of sessions){
+      const sessionEl = document.createElement('div');
+      sessionEl.className = 'board-session';
+      const header = document.createElement('div');
+      header.className = 'board-session__head';
+      header.textContent = 'Session ' + sessionId + ' \u2014 ' + recs.length + ' track' + (recs.length>1?'s':'');
+      sessionEl.appendChild(header);
+      for(const r of recs){
+        const idx = flatIndex;
+        this._boardFlatList.push(r);
+        sessionEl.appendChild(this._buildBoardRow(r, idx));
+        flatIndex++;
+      }
+      wrap.appendChild(sessionEl);
+    }
+  },
+
+  _buildBoardRow(r, flatIndex){
+    const row = document.createElement('div');
+    row.className = 'board-row';
+    const label = document.createElement('div');
+    label.className = 'board-row__label';
+    label.textContent = r.name;
+    const canvas = document.createElement('canvas');
+    canvas.width = 400; canvas.height = 36;
+    canvas.className = 'board-row__wave';
+    row.appendChild(label);
+    row.appendChild(canvas);
+
+    (async ()=>{
+      if(!r.decodedBuffer){
+        try{
+          const arrBuf = await r.blob.arrayBuffer();
+          r.decodedBuffer = await Engine.ctx.decodeAudioData(arrBuf);
+        }catch(e){ return; }
+      }
+      const peaks = computePeaks(r.decodedBuffer.getChannelData(0), canvas.width);
+      drawWaveform(canvas, peaks, 0, 1, []);
+    })();
+
+    row.onclick = (e)=> this._handleBoardRowClick(r, flatIndex, e);
+    return row;
+  },
+
+  _handleBoardRowClick(r, flatIndex, e){
+    if(e.shiftKey && this._boardLastClickedIndex!=null){
+      const lo = Math.min(this._boardLastClickedIndex, flatIndex);
+      const hi = Math.max(this._boardLastClickedIndex, flatIndex);
+      for(let i=lo;i<=hi;i++) this._boardSelection.add(this._boardFlatList[i]);
+    }else if(e.ctrlKey || e.metaKey){
+      if(this._boardSelection.has(r)) this._boardSelection.delete(r);
+      else this._boardSelection.add(r);
+    }else{
+      this._boardSelection = new Set([r]);
+    }
+    this._boardLastClickedIndex = flatIndex;
+    this._syncBoardRowStyles();
+    this._updateBoardSelectionCount();
+  },
+
+  _syncBoardRowStyles(){
+    const rows = this.els.boardSessions.querySelectorAll('.board-row');
+    rows.forEach((rowEl, i)=>{
+      rowEl.classList.toggle('selected', this._boardSelection.has(this._boardFlatList[i]));
+    });
+  },
+
+  _updateBoardSelectionCount(){
+    this.els.boardSelCount.textContent = this._boardSelection.size + ' selected';
+  },
+
+  async _exportBoardSelection(){
+    if(this._boardSelection.size===0){ alert('Click a track row to select it first \u2014 ctrl/cmd-click or shift-click to select more than one.'); return; }
+    const trimStartFrac = parseFloat(this.els.boardTrimStart.value)/100;
+    const trimEndFrac = parseFloat(this.els.boardTrimEnd.value)/100;
+    if(trimEndFrac<=trimStartFrac){ alert('Trim end must be after trim start.'); return; }
+    const fadeIn = parseFloat(this.els.boardFadeIn.value)/1000;
+    const fadeOut = parseFloat(this.els.boardFadeOut.value)/1000;
+    const results = [];
+    for(const r of this._boardSelection){
+      if(!r.decodedBuffer){
+        try{
+          const arrBuf = await r.blob.arrayBuffer();
+          r.decodedBuffer = await Engine.ctx.decodeAudioData(arrBuf);
+        }catch(e){ continue; }
+      }
+      const buf = r.decodedBuffer;
+      const sr = buf.sampleRate;
+      const total = buf.length;
+      const startSample = Math.floor(trimStartFrac*total);
+      const endSample = Math.floor(trimEndFrac*total);
+      const channels = [];
+      for(let ch=0; ch<buf.numberOfChannels; ch++) channels.push(buf.getChannelData(ch).slice(startSample,endSample));
+      applyFadesToBuffer(channels, sr, Math.max(fadeIn,0.005), Math.max(fadeOut,0.005));
+      const blob = encodeWAV(channels, sr);
+      results.push({ name: r.name+' (batch edit)', blob, url:URL.createObjectURL(blob), frames: channels[0].length, sessionId: ++Engine.sessionSeq });
+    }
+    this.onRecordingsReady(results);
+    alert('Exported '+results.length+' file(s) \u2014 check the Recordings panel.');
   },
 
 
