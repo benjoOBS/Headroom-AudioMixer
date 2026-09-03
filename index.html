@@ -92,6 +92,12 @@
   }
   .tb-label{ font-size:11px; color:var(--text-faint); }
   .tb-group{ display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+  .iface-pill{
+    display:inline-flex; align-items:center; gap:6px; background:var(--panel-raised); border:1px solid var(--line);
+    border-radius:12px; padding:4px 8px 4px 12px; font-size:11.5px; color:var(--text-dim); white-space:nowrap;
+  }
+  .iface-pill button{ background:none; border:none; color:var(--text-faint); font-size:14px; cursor:pointer; line-height:1; padding:0 2px; }
+  .iface-pill button:hover{ color:var(--danger); }
 
   /* ---------- Recordings panel ---------- */
   #recordings{
@@ -317,9 +323,10 @@
     <div class="status"><span class="dot"></span><span id="statusText">—</span></div>
     <div class="spacer"></div>
     <div class="tb-group">
-      <span class="tb-label">Interface</span>
-      <select id="interfaceSelect" class="tb-select"><option value="">No interface selected</option></select>
+      <span class="tb-label">Add interface</span>
+      <select id="interfaceSelect" class="tb-select"><option value="">Select to add&hellip;</option></select>
     </div>
+    <div class="tb-group" id="activeInterfacesWrap"></div>
     <div class="tb-group">
       <span class="tb-label">Out</span>
       <select id="outputSelect" class="tb-select"><option>System default</option></select>
@@ -600,7 +607,7 @@ const Engine = {
   silentSink: null,
   inputDevices: [],
   outputDevices: [],
-  interface: null, // { deviceId, stream, sourceNode, splitterNode, channelCount, label }
+  interfaces: new Map(), // deviceId -> { deviceId, stream, sourceNode, splitterNode, channelCount, label }
   tracks: [],
   trackSeq: 0,
   sessionSeq: 0,
@@ -672,19 +679,10 @@ const Engine = {
     catch(e){ console.warn('setSinkId failed', e); return false; }
   },
 
-  // A single active multichannel interface, split into individual mono channels so
-  // several tracks can each listen to a different input of the same device (e.g. XR18).
-  async setInterfaceDevice(deviceId){
-    if(this.recording){
-      return { ok:false, msg:'Stop recording before switching interfaces.' };
-    }
-    if(this.interface){
-      try{ this.interface.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
-      try{ this.interface.sourceNode.disconnect(); }catch(e){}
-      try{ this.interface.splitterNode.disconnect(); }catch(e){}
-      this.interface = null;
-    }
-    if(!deviceId){ UI.onInterfaceChanged(); return { ok:true }; }
+  // Multiple interfaces can be open at once so different tracks can pull from
+  // different physical devices, not just different channels of one device.
+  async addInterfaceDevice(deviceId){
+    if(this.interfaces.has(deviceId)) return { ok:true, alreadyActive:true };
     try{
       const stream = await navigator.mediaDevices.getUserMedia({
         audio:{
@@ -699,13 +697,25 @@ const Engine = {
       const sourceNode = this.ctx.createMediaStreamSource(stream);
       const splitterNode = this.ctx.createChannelSplitter(channelCount);
       sourceNode.connect(splitterNode);
-      this.interface = { deviceId, stream, sourceNode, splitterNode, channelCount, label: audioTrack.label || 'Input device' };
-      UI.onInterfaceChanged();
+      this.interfaces.set(deviceId, { deviceId, stream, sourceNode, splitterNode, channelCount, label: audioTrack.label || 'Input device' });
+      UI.onInterfacesChanged();
       return { ok:true, channelCount };
     }catch(e){
-      UI.onInterfaceChanged();
       return { ok:false, msg:"Couldn't open that device \u2014 check permissions, or that nothing else has it open." };
     }
+  },
+
+  removeInterfaceDevice(deviceId){
+    const iface = this.interfaces.get(deviceId);
+    if(!iface) return;
+    for(const t of this.tracks){
+      if(t.inputDeviceId === deviceId) t.setInputSource(null, null);
+    }
+    try{ iface.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+    try{ iface.sourceNode.disconnect(); }catch(e){}
+    try{ iface.splitterNode.disconnect(); }catch(e){}
+    this.interfaces.delete(deviceId);
+    UI.onInterfacesChanged();
   },
 
   addTrack(){
@@ -822,7 +832,8 @@ class Track{
     this.solo = false;
     this.armed = false;
     this.hasInput = false;
-    this.inputChannel = null; // index into the active interface's split channels
+    this.inputDeviceId = null; // which active interface this track is pulling from
+    this.inputChannel = null;  // which channel of that interface
     this.faderDb = 0;
     this.trimDb = 0;
     this.pan = 0;
@@ -882,44 +893,56 @@ class Track{
     this._buildDOM();
   }
 
-  // idx: index of the channel on the active interface (0-based), or null for no input.
-  setInputChannel(idx){
+  // deviceId/channelIdx identify a channel on one specific active interface,
+  // independently of what any other track is using.
+  setInputSource(deviceId, channelIdx){
     this._clearError();
     if(this._channelSource){
       try{ this._channelSource.disconnect(this.nodes.trim); }catch(e){}
       this._channelSource = null;
     }
-    this.inputChannel = (idx===''||idx===null||idx===undefined) ? null : Number(idx);
-    const iface = this.engine.interface;
-    if(this.inputChannel===null || !iface || this.inputChannel>=iface.channelCount){
-      this.hasInput = false;
+    if(deviceId==null || channelIdx==null || channelIdx===''){
+      this.inputDeviceId = null; this.inputChannel = null; this.hasInput = false;
+      return;
+    }
+    const iface = this.engine.interfaces.get(deviceId);
+    const idx = Number(channelIdx);
+    if(!iface || idx>=iface.channelCount){
+      this.inputDeviceId = null; this.inputChannel = null; this.hasInput = false;
       return;
     }
     try{
-      iface.splitterNode.connect(this.nodes.trim, this.inputChannel, 0);
+      iface.splitterNode.connect(this.nodes.trim, idx, 0);
       this._channelSource = iface.splitterNode;
+      this.inputDeviceId = deviceId;
+      this.inputChannel = idx;
       this.hasInput = true;
     }catch(e){
-      this.hasInput = false;
+      this.inputDeviceId = null; this.inputChannel = null; this.hasInput = false;
       this._showError('Could not connect to that channel.');
     }
   }
 
   populateChannelOptions(){
-    const iface = this.engine.interface;
-    const cur = this.inSelect.value;
-    if(!iface){
-      this.inSelect.innerHTML = '<option value="">No interface selected</option>';
-      if(this.inputChannel !== null) this.setInputChannel(null);
+    const cur = this.inSelect.value; // "deviceId::channelIdx"
+    const engineInterfaces = this.engine.interfaces;
+    if(engineInterfaces.size===0){
+      this.inSelect.innerHTML = '<option value="">No interface active</option>';
+      if(this.inputDeviceId!==null) this.setInputSource(null,null);
       return;
     }
     let opts = '<option value="">No input</option>';
-    for(let i=0;i<iface.channelCount;i++) opts += `<option value="${i}">Channel ${i+1}</option>`;
+    for(const [deviceId, iface] of engineInterfaces){
+      for(let i=0;i<iface.channelCount;i++){
+        opts += `<option value="${deviceId}::${i}">${iface.label} \u2014 Ch ${i+1}</option>`;
+      }
+    }
     this.inSelect.innerHTML = opts;
-    if(cur!=='' && Number(cur) < iface.channelCount){
+    const curDeviceId = cur ? cur.split('::')[0] : null;
+    if(cur!=='' && curDeviceId && engineInterfaces.has(curDeviceId)){
       this.inSelect.value = cur;
-    }else if(this.inputChannel !== null){
-      this.setInputChannel(null);
+    }else if(this.inputDeviceId!==null){
+      this.setInputSource(null,null);
       this.inSelect.value = '';
     }
   }
@@ -1056,7 +1079,11 @@ class Track{
     el.querySelector('.strip__remove').onclick = ()=> UI.confirmRemoveTrack(this);
     this.nameInput = el.querySelector('.strip__name');
     this.nameInput.oninput = (e)=>{ this.name = e.target.value || this.name; };
-    this.inSelect.onchange = (e)=> this.setInputChannel(e.target.value);
+    this.inSelect.onchange = (e)=>{
+      const v = e.target.value;
+      if(!v) this.setInputSource(null,null);
+      else{ const [devId, ch] = v.split('::'); this.setInputSource(devId, ch); }
+    };
     this.muteBtn.onclick = ()=> this.toggleMute();
     this.soloBtn.onclick = ()=> this.toggleSolo();
     this.armBtn.onclick = ()=> this.toggleArm();
@@ -1154,10 +1181,13 @@ const UI = {
     this.els.recordingsToggle.onclick = ()=> this.els.recordings.classList.toggle('open');
     this.els.outputSelect.onchange = (e)=> Engine.setOutputDevice(e.target.value);
     this.els.interfaceSelect.onchange = async (e)=>{
-      const prev = Engine.interface ? Engine.interface.deviceId : '';
-      const res = await Engine.setInterfaceDevice(e.target.value);
-      if(!res.ok){ alert(res.msg); e.target.value = prev; }
+      const deviceId = e.target.value;
+      if(!deviceId) return;
+      const res = await Engine.addInterfaceDevice(deviceId);
+      e.target.value = ''; // reset to placeholder so it's ready to add another
+      if(!res.ok) alert(res.msg);
     };
+    this.els.activeInterfacesWrap = document.getElementById('activeInterfacesWrap');
     this.els.saveProjectBtn.onclick = ()=> this.saveProject();
     this.els.loadProjectBtn.onclick = ()=> this.els.loadProjectInput.click();
     this.els.loadProjectInput.onchange = (e)=>{
@@ -1187,9 +1217,7 @@ const UI = {
     this._populateInterfaceOptions();
     this._updateStatus();
     if(Engine.inputDevices.length>0){
-      const first = Engine.inputDevices[0].deviceId;
-      this.els.interfaceSelect.value = first;
-      await Engine.setInterfaceDevice(first);
+      await Engine.addInterfaceDevice(Engine.inputDevices[0].deviceId);
     }
     this.addTrack();
     this._startMeterLoop();
@@ -1205,14 +1233,32 @@ const UI = {
 
   _populateInterfaceOptions(){
     const sel = this.els.interfaceSelect;
-    const cur = sel.value;
-    sel.innerHTML = '<option value="">No interface selected</option>' +
-      Engine.inputDevices.map(d=>`<option value="${d.deviceId}">${d.label || 'Input device'}</option>`).join('');
-    if(cur && Engine.inputDevices.some(d=>d.deviceId===cur)) sel.value = cur;
+    sel.innerHTML = '<option value="">Select to add\u2026</option>' +
+      Engine.inputDevices
+        .filter(d=>!Engine.interfaces.has(d.deviceId))
+        .map(d=>`<option value="${d.deviceId}">${d.label || 'Input device'}</option>`).join('');
   },
 
-  onInterfaceChanged(){
+  onInterfacesChanged(){
+    this._populateInterfaceOptions();
+    this._renderActiveInterfaces();
     for(const t of Engine.tracks) t.populateChannelOptions();
+  },
+
+  _renderActiveInterfaces(){
+    const wrap = this.els.activeInterfacesWrap;
+    wrap.innerHTML = '';
+    for(const [deviceId, iface] of Engine.interfaces){
+      const pill = document.createElement('span');
+      pill.className = 'iface-pill';
+      pill.innerHTML = `<span>${iface.label} (${iface.channelCount}ch)</span>`;
+      const rm = document.createElement('button');
+      rm.textContent = '\u00d7';
+      rm.title = 'Remove this interface';
+      rm.onclick = ()=> Engine.removeInterfaceDevice(deviceId);
+      pill.appendChild(rm);
+      wrap.appendChild(pill);
+    }
   },
 
   _updateStatus(){
@@ -1252,11 +1298,11 @@ const UI = {
 
   serializeProject(){
     return {
-      app:'headroom', version:1, savedAt:new Date().toISOString(),
-      interface: Engine.interface ? { deviceId:Engine.interface.deviceId, label:Engine.interface.label } : null,
+      app:'headroom', version:2, savedAt:new Date().toISOString(),
+      interfaces: Array.from(Engine.interfaces.values()).map(i=>({ deviceId:i.deviceId, label:i.label })),
       master: { faderDb: this.masterFaderState ? this.masterFaderState.faderDb : 0 },
       tracks: Engine.tracks.map(t=>({
-        name:t.name, inputChannel:t.inputChannel, trimDb:t.trimDb, pan:t.pan,
+        name:t.name, inputDeviceId:t.inputDeviceId, inputChannel:t.inputChannel, trimDb:t.trimDb, pan:t.pan,
         eq:{ low:t.eq.low, mid:t.eq.mid, high:t.eq.high }, faderDb:t.faderDb,
         muted:t.muted, solo:t.solo, armed:t.armed,
         fx:{ gate:{...t.fx.gate}, comp:{...t.fx.comp}, delay:{...t.fx.delay} }
@@ -1283,14 +1329,17 @@ const UI = {
     if(!data || data.app!=='headroom'){ alert("This doesn't look like a Headroom project file."); return; }
 
     let ifaceMsg = '';
-    if(data.interface){
-      let match = Engine.inputDevices.find(d=>d.deviceId===data.interface.deviceId);
-      if(!match && data.interface.label) match = Engine.inputDevices.find(d=>d.label===data.interface.label);
+    const savedInterfaces = data.interfaces || (data.interface ? [data.interface] : []); // v1 back-compat
+    const deviceIdMap = {}; // saved deviceId -> resolved current deviceId
+    for(const saved of savedInterfaces){
+      let match = Engine.inputDevices.find(d=>d.deviceId===saved.deviceId);
+      if(!match && saved.label) match = Engine.inputDevices.find(d=>d.label===saved.label);
       if(match){
-        this.els.interfaceSelect.value = match.deviceId;
-        await Engine.setInterfaceDevice(match.deviceId);
+        deviceIdMap[saved.deviceId] = match.deviceId;
+        const res = await Engine.addInterfaceDevice(match.deviceId);
+        if(!res.ok) ifaceMsg += ' Could not reopen "'+(saved.label||match.label)+'".';
       }else{
-        ifaceMsg = ' Your saved interface ("'+data.interface.label+'") wasn\'t found \u2014 pick it manually from the Interface list.';
+        ifaceMsg += ' Saved interface "'+(saved.label||'unknown')+'" wasn\'t found \u2014 add it manually.';
       }
     }
 
@@ -1303,9 +1352,10 @@ const UI = {
       t.name = saved.name || t.name;
       t.nameInput.value = t.name;
       t.populateChannelOptions();
-      if(saved.inputChannel!=null && Engine.interface && saved.inputChannel < Engine.interface.channelCount){
-        t.inSelect.value = String(saved.inputChannel);
-        t.setInputChannel(saved.inputChannel);
+      const resolvedDeviceId = saved.inputDeviceId!=null ? (deviceIdMap[saved.inputDeviceId] || saved.inputDeviceId) : null;
+      if(resolvedDeviceId && Engine.interfaces.has(resolvedDeviceId) && saved.inputChannel!=null){
+        t.inSelect.value = resolvedDeviceId+'::'+saved.inputChannel;
+        t.setInputSource(resolvedDeviceId, saved.inputChannel);
       }
       t.knobControls.trim.setValue(saved.trimDb||0);
       t.knobControls.pan.setValue(saved.pan||0);
