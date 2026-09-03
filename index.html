@@ -224,16 +224,16 @@
   }
   .strip__fx-btn.active{ color:var(--accent); }
 
-  #fxOverlay{
+  #fxOverlay, #editOverlay{
     position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:60;
     display:none; align-items:center; justify-content:center; padding:16px;
   }
-  #fxOverlay.open{ display:flex; }
-  #fxPanel{
+  #fxOverlay.open, #editOverlay.open{ display:flex; }
+  #fxPanel, #editPanel{
     background:var(--panel); border:1px solid var(--line); border-radius:10px;
     width:100%; max-width:420px; max-height:85vh; overflow-y:auto; padding:16px;
   }
-  #fxPanel h2{ margin:0; font-size:16px; padding-right:24px; }
+  #fxPanel h2, #editPanel h2{ margin:0; font-size:16px; padding-right:24px; }
   .fx-close{
     float:right; background:none; border:none; color:var(--text-faint); font-size:20px; cursor:pointer; line-height:1;
   }
@@ -256,6 +256,27 @@
   .fx-param input[type=range]{ width:100%; accent-color:var(--accent); }
   .fx-param .fx-param-val{ font-family:var(--mono); font-size:10px; color:var(--text-dim); }
   .fx-note{ grid-column:1/-1; font-size:11px; color:var(--text-faint); }
+
+  #editWaveWrap{
+    position:relative; width:100%; height:120px; background:var(--panel-recessed);
+    border:1px solid var(--line); border-radius:6px; overflow:hidden; touch-action:none;
+  }
+  #editCanvas{ width:100%; height:100%; display:block; cursor:crosshair; }
+  .edit-handle{
+    position:absolute; top:0; bottom:0; width:18px; margin-left:-9px; cursor:ew-resize; touch-action:none;
+  }
+  .edit-handle::after{
+    content:''; position:absolute; top:0; bottom:0; left:50%; width:3px; background:var(--accent); transform:translateX(-50%);
+  }
+  .edit-hint{ font-size:11px; color:var(--text-faint); margin-top:8px; }
+  .edit-marker-row{
+    display:flex; justify-content:space-between; align-items:center; font-size:11px;
+    color:var(--text-dim); padding:4px 0; border-bottom:1px solid var(--line-soft);
+  }
+  .edit-marker-row button{ background:none; border:none; color:var(--danger); font-size:11px; cursor:pointer; }
+  .edit-actions{ display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+  .edit-actions .tb-btn{ flex:0 0 auto; }
+  .edit-actions .tb-btn.record{ margin-left:auto; }
 
   @media (max-width:480px){
     .strip{ flex:0 0 100px; }
@@ -315,6 +336,29 @@
     </div>
   </div>
 
+  <div id="editOverlay">
+    <div id="editPanel">
+      <button class="fx-close" id="editClose">&times;</button>
+      <h2 id="editTitle">Edit</h2>
+      <div id="editWaveWrap">
+        <canvas id="editCanvas" width="600" height="120"></canvas>
+        <div class="edit-handle" id="editHandleStart"></div>
+        <div class="edit-handle" id="editHandleEnd"></div>
+      </div>
+      <div class="edit-hint">Drag the edge handles to trim. Tap inside the waveform to add a split point.</div>
+      <div class="fx-params" style="margin-top:12px;">
+        <div class="fx-param"><label>Fade in</label><input type="range" id="editFadeIn" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="editFadeInVal">0ms</div></div>
+        <div class="fx-param"><label>Fade out</label><input type="range" id="editFadeOut" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="editFadeOutVal">0ms</div></div>
+      </div>
+      <div id="editMarkersList" style="margin-top:6px;"></div>
+      <div class="edit-actions">
+        <button class="tb-btn" id="editPreviewBtn">&#9654; Preview</button>
+        <button class="tb-btn" id="editClearMarkersBtn">Clear splits</button>
+        <button class="tb-btn record" id="editExportBtn">Export</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 'use strict';
 
@@ -367,6 +411,58 @@ function encodeWAV(channels, sampleRate){
     }
   }
   return new Blob([buffer], {type:'audio/wav'});
+}
+
+/* ============================== Clip editing helpers ============================== */
+function computePeaks(channelData, numBuckets){
+  const peaks = new Array(numBuckets);
+  const bucketSize = Math.max(1, Math.floor(channelData.length / numBuckets));
+  for(let b=0;b<numBuckets;b++){
+    let min=0, max=0;
+    const start = b*bucketSize;
+    const end = Math.min(start+bucketSize, channelData.length);
+    for(let i=start;i<end;i++){
+      const v = channelData[i];
+      if(v<min) min=v;
+      if(v>max) max=v;
+    }
+    peaks[b] = {min,max};
+  }
+  return peaks;
+}
+
+function drawWaveform(canvas, peaks, trimStartFrac, trimEndFrac, markerFracs){
+  const c2d = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height, mid = h/2;
+  const n = peaks.length;
+  c2d.clearRect(0,0,w,h);
+  for(let x=0;x<w;x++){
+    const idx = Math.min(n-1, Math.floor((x/w)*n));
+    const p = peaks[idx] || {min:0,max:0};
+    const frac = x/w;
+    const inTrim = frac>=trimStartFrac && frac<=trimEndFrac;
+    c2d.strokeStyle = inTrim ? '#E0A544' : '#5C5D63';
+    c2d.beginPath();
+    c2d.moveTo(x, mid + p.min*mid*0.9);
+    c2d.lineTo(x, mid + p.max*mid*0.9 + 0.5);
+    c2d.stroke();
+  }
+  c2d.strokeStyle = '#D9534F';
+  for(const f of markerFracs){
+    const x = Math.round(f*w)+0.5;
+    c2d.beginPath(); c2d.moveTo(x,0); c2d.lineTo(x,h); c2d.stroke();
+  }
+}
+
+// Linear in/out fades applied in place to Float32Array channel data.
+function applyFadesToBuffer(channels, sampleRate, fadeInSec, fadeOutSec){
+  const n = channels[0] ? channels[0].length : 0;
+  const fadeInSamples = clamp(Math.floor(fadeInSec*sampleRate), 0, n);
+  const fadeOutSamples = clamp(Math.floor(fadeOutSec*sampleRate), 0, n);
+  for(const ch of channels){
+    for(let i=0;i<fadeInSamples;i++){ ch[i] *= i/fadeInSamples; }
+    for(let i=0;i<fadeOutSamples;i++){ ch[n-1-i] *= i/fadeOutSamples; }
+  }
 }
 
 /* ===================== AudioWorkletProcessors: recorder + gate ===================== */
@@ -970,6 +1066,26 @@ const UI = {
     this.els.fxClose.onclick = ()=> this.els.fxOverlay.classList.remove('open');
     this.els.fxOverlay.onclick = (e)=>{ if(e.target===this.els.fxOverlay) this.els.fxOverlay.classList.remove('open'); };
 
+    this.els.editOverlay = document.getElementById('editOverlay');
+    this.els.editTitle = document.getElementById('editTitle');
+    this.els.editClose = document.getElementById('editClose');
+    this.els.editWaveWrap = document.getElementById('editWaveWrap');
+    this.els.editCanvas = document.getElementById('editCanvas');
+    this.els.editHandleStart = document.getElementById('editHandleStart');
+    this.els.editHandleEnd = document.getElementById('editHandleEnd');
+    this.els.editFadeIn = document.getElementById('editFadeIn');
+    this.els.editFadeInVal = document.getElementById('editFadeInVal');
+    this.els.editFadeOut = document.getElementById('editFadeOut');
+    this.els.editFadeOutVal = document.getElementById('editFadeOutVal');
+    this.els.editMarkersList = document.getElementById('editMarkersList');
+    this.els.editPreviewBtn = document.getElementById('editPreviewBtn');
+    this.els.editClearMarkersBtn = document.getElementById('editClearMarkersBtn');
+    this.els.editExportBtn = document.getElementById('editExportBtn');
+    this.els.editClose.onclick = ()=> this.els.editOverlay.classList.remove('open');
+    this.els.editOverlay.onclick = (e)=>{ if(e.target===this.els.editOverlay) this.els.editOverlay.classList.remove('open'); };
+    this._wireEditHandles();
+    this._wireEditControls();
+
     this.els.powerBtn.onclick = ()=>this.powerOn();
     this.els.addTrackBtn.onclick = ()=>this.addTrack();
     this.els.emptyAddTrack.onclick = ()=>this.addTrack();
@@ -1265,6 +1381,189 @@ const UI = {
     return mod;
   },
 
+  /* ---- Clip editor ---- */
+  async openClipEditor(recording){
+    if(!recording.decodedBuffer){
+      let arrBuf;
+      try{ arrBuf = await recording.blob.arrayBuffer(); }
+      catch(e){ alert('Could not read this recording.'); return; }
+      try{ recording.decodedBuffer = await Engine.ctx.decodeAudioData(arrBuf); }
+      catch(e){ alert('Could not decode this recording for editing.'); return; }
+    }
+    const buf = recording.decodedBuffer;
+    const numBuckets = this.els.editCanvas.width;
+    const perChannelPeaks = [];
+    for(let ch=0; ch<buf.numberOfChannels; ch++) perChannelPeaks.push(computePeaks(buf.getChannelData(ch), numBuckets));
+    const mono = new Array(numBuckets);
+    for(let i=0;i<numBuckets;i++){
+      let mn=0, mx=0;
+      for(const chPeaks of perChannelPeaks){ if(chPeaks[i].min<mn) mn=chPeaks[i].min; if(chPeaks[i].max>mx) mx=chPeaks[i].max; }
+      mono[i] = {min:mn, max:mx};
+    }
+    this._editMonoPeaks = mono;
+    this._editState = { recording, trimStart:0, trimEnd:1, fadeIn:0, fadeOut:0, markers:[] };
+
+    this.els.editFadeIn.value = 0; this.els.editFadeInVal.textContent = '0ms';
+    this.els.editFadeOut.value = 0; this.els.editFadeOutVal.textContent = '0ms';
+    this.els.editTitle.textContent = recording.name + ' \u2014 Edit';
+    this._redrawEdit();
+    this._updateEditHandles();
+    this._renderMarkersList();
+    this.els.editOverlay.classList.add('open');
+  },
+
+  _wireEditHandles(){
+    const wrap = this.els.editWaveWrap;
+    const makeDrag = (handleEl, which)=>{
+      handleEl.addEventListener('pointerdown', (e)=>{
+        if(!this._editState) return;
+        handleEl.setPointerCapture(e.pointerId);
+        const move = (ev)=>{
+          const rect = wrap.getBoundingClientRect();
+          const frac = clamp((ev.clientX-rect.left)/rect.width, 0, 1);
+          const st = this._editState;
+          if(which==='start') st.trimStart = Math.min(frac, st.trimEnd-0.01);
+          else st.trimEnd = Math.max(frac, st.trimStart+0.01);
+          this._redrawEdit(); this._updateEditHandles();
+        };
+        const up = ()=>{
+          handleEl.removeEventListener('pointermove', move);
+          handleEl.removeEventListener('pointerup', up);
+        };
+        handleEl.addEventListener('pointermove', move);
+        handleEl.addEventListener('pointerup', up);
+      });
+    };
+    makeDrag(this.els.editHandleStart, 'start');
+    makeDrag(this.els.editHandleEnd, 'end');
+
+    this.els.editCanvas.addEventListener('click', (e)=>{
+      if(!this._editState) return;
+      const rect = wrap.getBoundingClientRect();
+      const frac = clamp((e.clientX-rect.left)/rect.width, 0, 1);
+      const st = this._editState;
+      if(frac>st.trimStart && frac<st.trimEnd){
+        st.markers.push(frac);
+        st.markers.sort((a,b)=>a-b);
+        this._redrawEdit();
+        this._renderMarkersList();
+      }
+    });
+  },
+
+  _wireEditControls(){
+    this.els.editFadeIn.oninput = (e)=>{
+      const ms = parseFloat(e.target.value);
+      this.els.editFadeInVal.textContent = ms+'ms';
+      if(this._editState) this._editState.fadeIn = ms/1000;
+    };
+    this.els.editFadeOut.oninput = (e)=>{
+      const ms = parseFloat(e.target.value);
+      this.els.editFadeOutVal.textContent = ms+'ms';
+      if(this._editState) this._editState.fadeOut = ms/1000;
+    };
+    this.els.editClearMarkersBtn.onclick = ()=>{
+      if(!this._editState) return;
+      this._editState.markers = [];
+      this._redrawEdit();
+      this._renderMarkersList();
+    };
+    this.els.editPreviewBtn.onclick = ()=> this._previewEdit();
+    this.els.editExportBtn.onclick = ()=> this._exportEdit();
+  },
+
+  _redrawEdit(){
+    if(!this._editState) return;
+    const st = this._editState;
+    drawWaveform(this.els.editCanvas, this._editMonoPeaks, st.trimStart, st.trimEnd, st.markers);
+  },
+
+  _updateEditHandles(){
+    if(!this._editState) return;
+    this.els.editHandleStart.style.left = (this._editState.trimStart*100)+'%';
+    this.els.editHandleEnd.style.left = (this._editState.trimEnd*100)+'%';
+  },
+
+  _renderMarkersList(){
+    const st = this._editState;
+    const list = this.els.editMarkersList;
+    list.innerHTML = '';
+    if(!st) return;
+    const dur = st.recording.decodedBuffer.duration;
+    st.markers.forEach((f,i)=>{
+      const row = document.createElement('div');
+      row.className = 'edit-marker-row';
+      row.innerHTML = `<span>Split ${i+1} \u2014 ${(f*dur).toFixed(2)}s</span>`;
+      const del = document.createElement('button');
+      del.textContent = 'Remove';
+      del.onclick = ()=>{ st.markers.splice(i,1); this._redrawEdit(); this._renderMarkersList(); };
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  },
+
+  _previewEdit(){
+    const st = this._editState;
+    if(!st) return;
+    const buf = st.recording.decodedBuffer;
+    const sr = buf.sampleRate;
+    const total = buf.length;
+    const startSample = Math.floor(st.trimStart*total);
+    const endSample = Math.floor(st.trimEnd*total);
+    const segLen = Math.max(1, endSample-startSample);
+    const previewBuf = Engine.ctx.createBuffer(buf.numberOfChannels, segLen, sr);
+    for(let ch=0; ch<buf.numberOfChannels; ch++){
+      previewBuf.copyToChannel(buf.getChannelData(ch).slice(startSample,endSample), ch);
+    }
+    const src = Engine.ctx.createBufferSource();
+    src.buffer = previewBuf;
+    const g = Engine.ctx.createGain();
+    const now = Engine.ctx.currentTime;
+    const dur = previewBuf.duration;
+    const fadeIn = Math.min(Math.max(st.fadeIn, 0.005), dur/2);
+    const fadeOut = Math.min(Math.max(st.fadeOut, 0.005), dur/2);
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(1, now+fadeIn);
+    g.gain.setValueAtTime(1, now+Math.max(fadeIn, dur-fadeOut));
+    g.gain.linearRampToValueAtTime(0, now+dur);
+    src.connect(g); g.connect(Engine.masterGain);
+    src.start();
+  },
+
+  _exportEdit(){
+    const st = this._editState;
+    if(!st) return;
+    const buf = st.recording.decodedBuffer;
+    const sr = buf.sampleRate;
+    const total = buf.length;
+    const fullChannels = [];
+    for(let ch=0; ch<buf.numberOfChannels; ch++) fullChannels.push(buf.getChannelData(ch));
+
+    const trimStartSample = Math.floor(st.trimStart*total);
+    const trimEndSample = Math.floor(st.trimEnd*total);
+    const markerSamples = st.markers
+      .map(f=>Math.floor(f*total))
+      .filter(s=>s>trimStartSample && s<trimEndSample)
+      .sort((a,b)=>a-b);
+    const cutPoints = [trimStartSample, ...markerSamples, trimEndSample];
+
+    const antiClick = 0.005;
+    const results = [];
+    for(let i=0;i<cutPoints.length-1;i++){
+      const segStart=cutPoints[i], segEnd=cutPoints[i+1];
+      const segChannels = fullChannels.map(ch=>ch.slice(segStart,segEnd));
+      const isFirst = i===0, isLast = i===cutPoints.length-2;
+      const fadeInSec = isFirst ? Math.max(st.fadeIn, antiClick) : antiClick;
+      const fadeOutSec = isLast ? Math.max(st.fadeOut, antiClick) : antiClick;
+      applyFadesToBuffer(segChannels, sr, fadeInSec, fadeOutSec);
+      const blob = encodeWAV(segChannels, sr);
+      const suffix = cutPoints.length>2 ? ' (part '+(i+1)+')' : ' (edited)';
+      results.push({ name: st.recording.name+suffix, blob, url:URL.createObjectURL(blob), frames: segChannels[0].length });
+    }
+    this.onRecordingsReady(results);
+    this.els.editOverlay.classList.remove('open');
+  },
+
 
   wireKnob(el, min, max, def, onChange, formatFn){
     const dial = el.querySelector('.knob__dial');
@@ -1386,6 +1685,10 @@ const UI = {
       const a = document.createElement('a');
       a.href = r.url; a.download = r.name.replace(/\s+/g,'_')+'.wav'; a.textContent = 'Download';
       row.querySelector('.rec-top').appendChild(a);
+      const editA = document.createElement('a');
+      editA.href = '#'; editA.textContent = 'Edit';
+      editA.onclick = (e)=>{ e.preventDefault(); this.openClipEditor(r); };
+      row.querySelector('.rec-top').appendChild(editA);
       this.els.recordingsList.prepend(row);
     }
     this.els.recCount.textContent = this._recordings.length ? '('+this._recordings.length+')' : '';
