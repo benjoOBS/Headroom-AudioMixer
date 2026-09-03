@@ -31,6 +31,7 @@
     font-family:var(--sans);
     -webkit-tap-highlight-color:transparent;
     overscroll-behavior:none;
+    color-scheme:dark;
   }
   body{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
   button{ font-family:inherit; }
@@ -100,16 +101,18 @@
   #recordings.open{ max-height:260px; padding:10px 14px; overflow-y:auto; }
   #recordings h2{ font-size:11px; text-transform:none; color:var(--text-faint); margin:0 0 8px; font-weight:600; }
   .rec-row{
-    display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line-soft);
+    display:flex; flex-direction:column; gap:6px; padding:8px 0; border-bottom:1px solid var(--line-soft);
     font-size:13px;
   }
   .rec-row:last-child{ border-bottom:none; }
+  .rec-row .rec-top{ display:flex; align-items:center; gap:10px; }
   .rec-row .name{ flex:1; }
   .rec-row .meta{ color:var(--text-faint); font-family:var(--mono); font-size:11.5px; }
   .rec-row a{
     color:var(--accent); text-decoration:none; border:1px solid var(--accent-dim);
     padding:5px 10px; border-radius:5px; font-size:12px;
   }
+  .rec-row audio{ width:100%; height:32px; }
 
   /* ---------- Console ---------- */
   #console{
@@ -245,6 +248,9 @@
     <button class="tb-btn" id="addTrackBtn">+ Track</button>
     <button class="tb-btn record" id="recordBtn">● Record</button>
     <button class="tb-btn" id="recordingsToggle">Recordings <span id="recCount"></span></button>
+    <button class="tb-btn" id="saveProjectBtn">Save project</button>
+    <button class="tb-btn" id="loadProjectBtn">Load project</button>
+    <input type="file" id="loadProjectInput" accept="application/json,.json" style="display:none;">
     <a class="tb-btn" href="manual.html" target="_blank" rel="noopener">Manual</a>
   </div>
 
@@ -616,6 +622,7 @@ class Track{
     n.recordTap.connect(n.muteGain);
     n.muteGain.connect(n.fader);
     n.fader.connect(n.analyser);
+    n.analyser.connect(engine.silentSink); // keeps the analyser "live" so it actually gets processed each frame
     n.fader.connect(engine.masterGain);
 
     this._clipUntil = 0;
@@ -673,10 +680,13 @@ class Track{
   }
   setFaderDb(db){ this.faderDb=db; rampGain(this.nodes.fader.gain, dbToGain(db), this.engine.ctx); }
 
-  toggleMute(){ this.muted=!this.muted; this.engine.updateMuteSoloStates(); this._syncButtons(); }
-  toggleSolo(){ this.solo=!this.solo; this.engine.updateMuteSoloStates(); this._syncButtons(); }
-  toggleArm(){
-    this.armed=!this.armed;
+  toggleMute(){ this.setMuted(!this.muted); }
+  toggleSolo(){ this.setSolo(!this.solo); }
+  toggleArm(){ this.setArmed(!this.armed); }
+  setMuted(v){ this.muted=!!v; this.engine.updateMuteSoloStates(); this._syncButtons(); }
+  setSolo(v){ this.solo=!!v; this.engine.updateMuteSoloStates(); this._syncButtons(); }
+  setArmed(v){
+    this.armed=!!v;
     this.el.classList.toggle('armed', this.armed);
     this.armBtn.classList.toggle('on-arm', this.armed);
   }
@@ -749,18 +759,21 @@ class Track{
     this.clipLight = el.querySelector('.meter-clip');
 
     el.querySelector('.strip__remove').onclick = ()=> UI.confirmRemoveTrack(this);
-    el.querySelector('.strip__name').oninput = (e)=>{ this.name = e.target.value || this.name; };
+    this.nameInput = el.querySelector('.strip__name');
+    this.nameInput.oninput = (e)=>{ this.name = e.target.value || this.name; };
     this.inSelect.onchange = (e)=> this.setInputChannel(e.target.value);
     this.muteBtn.onclick = ()=> this.toggleMute();
     this.soloBtn.onclick = ()=> this.toggleSolo();
     this.armBtn.onclick = ()=> this.toggleArm();
 
-    UI.wireKnob(el.querySelector('[data-knob="trim"]'), -20,20,0, v=>this.setTrim(v), v=>formatDb(v));
-    UI.wireKnob(el.querySelector('[data-knob="pan"]'), -1,1,0, v=>this.setPan(v), v=> v===0?'C':(v<0?'L'+Math.round(-v*100):'R'+Math.round(v*100)));
-    UI.wireKnob(el.querySelector('[data-knob="low"]'), -15,15,0, v=>this.setEq('low',v), v=>formatDb(v));
-    UI.wireKnob(el.querySelector('[data-knob="mid"]'), -15,15,0, v=>this.setEq('mid',v), v=>formatDb(v));
-    UI.wireKnob(el.querySelector('[data-knob="high"]'), -15,15,0, v=>this.setEq('high',v), v=>formatDb(v));
-    UI.wireFader(this);
+    this.knobControls = {
+      trim: UI.wireKnob(el.querySelector('[data-knob="trim"]'), -20,20,0, v=>this.setTrim(v), v=>formatDb(v)),
+      pan: UI.wireKnob(el.querySelector('[data-knob="pan"]'), -1,1,0, v=>this.setPan(v), v=> v===0?'C':(v<0?'L'+Math.round(-v*100):'R'+Math.round(v*100))),
+      low: UI.wireKnob(el.querySelector('[data-knob="low"]'), -15,15,0, v=>this.setEq('low',v), v=>formatDb(v)),
+      mid: UI.wireKnob(el.querySelector('[data-knob="mid"]'), -15,15,0, v=>this.setEq('mid',v), v=>formatDb(v)),
+      high: UI.wireKnob(el.querySelector('[data-knob="high"]'), -15,15,0, v=>this.setEq('high',v), v=>formatDb(v))
+    };
+    this.faderControl = UI.wireFader(this);
   }
 
 }
@@ -788,6 +801,9 @@ const UI = {
     this.els.recordings = document.getElementById('recordings');
     this.els.recordingsList = document.getElementById('recordingsList');
     this.els.recCount = document.getElementById('recCount');
+    this.els.saveProjectBtn = document.getElementById('saveProjectBtn');
+    this.els.loadProjectBtn = document.getElementById('loadProjectBtn');
+    this.els.loadProjectInput = document.getElementById('loadProjectInput');
 
     this.els.powerBtn.onclick = ()=>this.powerOn();
     this.els.addTrackBtn.onclick = ()=>this.addTrack();
@@ -799,6 +815,13 @@ const UI = {
       const prev = Engine.interface ? Engine.interface.deviceId : '';
       const res = await Engine.setInterfaceDevice(e.target.value);
       if(!res.ok){ alert(res.msg); e.target.value = prev; }
+    };
+    this.els.saveProjectBtn.onclick = ()=> this.saveProject();
+    this.els.loadProjectBtn.onclick = ()=> this.els.loadProjectInput.click();
+    this.els.loadProjectInput.onchange = (e)=>{
+      const file = e.target.files[0];
+      if(file) this.loadProjectFile(file);
+      e.target.value = '';
     };
 
     this._recordings = [];
@@ -885,6 +908,79 @@ const UI = {
     this.els.emptyState.classList.toggle('hidden', Engine.tracks.length>0);
   },
 
+  serializeProject(){
+    return {
+      app:'headroom', version:1, savedAt:new Date().toISOString(),
+      interface: Engine.interface ? { deviceId:Engine.interface.deviceId, label:Engine.interface.label } : null,
+      master: { faderDb: this.masterFaderState ? this.masterFaderState.faderDb : 0 },
+      tracks: Engine.tracks.map(t=>({
+        name:t.name, inputChannel:t.inputChannel, trimDb:t.trimDb, pan:t.pan,
+        eq:{ low:t.eq.low, mid:t.eq.mid, high:t.eq.high }, faderDb:t.faderDb,
+        muted:t.muted, solo:t.solo, armed:t.armed
+      }))
+    };
+  },
+
+  saveProject(){
+    const data = this.serializeProject();
+    const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'headroom-project-'+Date.now()+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+  },
+
+  async loadProjectFile(file){
+    if(Engine.recording){ alert('Stop recording before loading a project.'); return; }
+    let data;
+    try{
+      data = JSON.parse(await file.text());
+    }catch(e){ alert('That file could not be read as a Headroom project.'); return; }
+    if(!data || data.app!=='headroom'){ alert("This doesn't look like a Headroom project file."); return; }
+
+    let ifaceMsg = '';
+    if(data.interface){
+      let match = Engine.inputDevices.find(d=>d.deviceId===data.interface.deviceId);
+      if(!match && data.interface.label) match = Engine.inputDevices.find(d=>d.label===data.interface.label);
+      if(match){
+        this.els.interfaceSelect.value = match.deviceId;
+        await Engine.setInterfaceDevice(match.deviceId);
+      }else{
+        ifaceMsg = ' Your saved interface ("'+data.interface.label+'") wasn\'t found \u2014 pick it manually from the Interface list.';
+      }
+    }
+
+    for(const t of [...Engine.tracks]) Engine.removeTrack(t);
+    this._syncEmptyState();
+
+    for(const saved of (data.tracks||[])){
+      const t = Engine.addTrack();
+      this.els.strips.appendChild(t.el);
+      t.name = saved.name || t.name;
+      t.nameInput.value = t.name;
+      t.populateChannelOptions();
+      if(saved.inputChannel!=null && Engine.interface && saved.inputChannel < Engine.interface.channelCount){
+        t.inSelect.value = String(saved.inputChannel);
+        t.setInputChannel(saved.inputChannel);
+      }
+      t.knobControls.trim.setValue(saved.trimDb||0);
+      t.knobControls.pan.setValue(saved.pan||0);
+      t.knobControls.low.setValue((saved.eq&&saved.eq.low)||0);
+      t.knobControls.mid.setValue((saved.eq&&saved.eq.mid)||0);
+      t.knobControls.high.setValue((saved.eq&&saved.eq.high)||0);
+      t.faderControl.setValue(saved.faderDb||0);
+      t.setMuted(!!saved.muted);
+      t.setSolo(!!saved.solo);
+      t.setArmed(!!saved.armed);
+    }
+    this._syncEmptyState();
+
+    if(data.master && this.masterFaderControl) this.masterFaderControl.setValue(data.master.faderDb||0);
+
+    alert('Project loaded.'+ifaceMsg);
+  },
+
   _buildMasterStrip(){
     const el = this.els.masterStrip;
     el.innerHTML = `
@@ -910,10 +1006,11 @@ const UI = {
     this.masterMeterMask = el.querySelector('.meter__mask');
     this.masterClipLight = el.querySelector('.meter-clip');
 
-    this.wireFader({
+    this.masterFaderState = {
       faderCap:this.masterFaderCap, faderTrack:this.masterFaderTrack, faderReadout:this.masterFaderReadout,
       faderDb:0, setFaderDb:(db)=>{ rampGain(Engine.masterGain.gain, dbToGain(db), Engine.ctx); }
-    });
+    };
+    this.masterFaderControl = this.wireFader(this.masterFaderState);
   },
 
   /* ---- generic drag control used for knobs and faders ---- */
@@ -951,6 +1048,8 @@ const UI = {
       value = clamp(value - Math.sign(e.deltaY)*range*0.02, min, max);
       apply();
     }, {passive:false});
+
+    return { setValue(v){ value = clamp(v,min,max); apply(); } };
   },
 
   wireFader(target){
@@ -987,6 +1086,8 @@ const UI = {
       target.faderDb = db; apply(db);
     }, {passive:false});
     track.addEventListener('dblclick', ()=>{ target.faderDb=0; apply(0); });
+
+    return { setValue(db){ target.faderDb = db; apply(db); } };
   },
 
   /* ---- metering loop ---- */
@@ -1026,10 +1127,13 @@ const UI = {
       const row = document.createElement('div');
       row.className = 'rec-row';
       const secs = (r.frames / Engine.ctx.sampleRate).toFixed(1);
-      row.innerHTML = `<span class="name">${r.name}</span><span class="meta">${secs}s</span>`;
+      row.innerHTML = `<div class="rec-top"><span class="name">${r.name}</span><span class="meta">${secs}s</span></div>`;
+      const audioEl = document.createElement('audio');
+      audioEl.controls = true; audioEl.preload = 'metadata'; audioEl.src = r.url;
+      row.appendChild(audioEl);
       const a = document.createElement('a');
       a.href = r.url; a.download = r.name.replace(/\s+/g,'_')+'.wav'; a.textContent = 'Download';
-      row.appendChild(a);
+      row.querySelector('.rec-top').appendChild(a);
       this.els.recordingsList.prepend(row);
     }
     this.els.recCount.textContent = this._recordings.length ? '('+this._recordings.length+')' : '';
