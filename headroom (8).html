@@ -1,0 +1,1980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Headroom — Console</title>
+<style>
+  :root{
+    --bg:#17181A;
+    --panel:#212226;
+    --panel-raised:#2B2C30;
+    --panel-recessed:#141517;
+    --line:#38393E;
+    --line-soft:#2A2B2F;
+    --text:#E8E6E1;
+    --text-dim:#93949A;
+    --text-faint:#5C5D63;
+    --accent:#E0A544;
+    --accent-dim:#8A6A34;
+    --danger:#D9534F;
+    --meter-green:#5FB876;
+    --meter-yellow:#DFC24A;
+    --meter-red:#D9534F;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg); color:var(--text);
+    font-family:var(--sans);
+    -webkit-tap-highlight-color:transparent;
+    overscroll-behavior:none;
+    color-scheme:dark;
+  }
+  body{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
+  button{ font-family:inherit; }
+  select{ font-family:inherit; }
+
+  /* ---------- Power-on splash ---------- */
+  #splash{
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:18px; background:var(--bg); z-index:50;
+    text-align:center; padding:24px;
+  }
+  #splash.hidden{ display:none; }
+  #splash h1{
+    font-size:clamp(28px,7vw,40px); margin:0; font-weight:600; letter-spacing:-0.01em;
+  }
+  #splash h1 span{ color:var(--accent); }
+  #splash p{ color:var(--text-dim); max-width:38ch; margin:0; line-height:1.5; font-size:14.5px; }
+  #powerBtn{
+    width:104px; height:104px; border-radius:50%;
+    border:2px solid var(--line);
+    background:radial-gradient(circle at 35% 30%, var(--panel-raised), var(--panel-recessed));
+    color:var(--accent); font-size:13px; letter-spacing:.03em;
+    cursor:pointer; box-shadow:0 0 0 0 rgba(224,165,68,0.35);
+    transition:box-shadow .25s ease, transform .1s ease;
+  }
+  #powerBtn:hover{ box-shadow:0 0 0 8px rgba(224,165,68,0.08); }
+  #powerBtn:active{ transform:scale(0.96); }
+  #splashError{ color:var(--danger); font-size:13px; max-width:38ch; min-height:1.2em; }
+
+  /* ---------- Top bar ---------- */
+  #topbar{
+    display:flex; align-items:center; gap:14px;
+    padding:10px 14px; background:var(--panel);
+    border-bottom:1px solid var(--line); flex:0 0 auto;
+    overflow-x:auto; white-space:nowrap;
+  }
+  #topbar .brand{ font-weight:600; font-size:15px; letter-spacing:-0.01em; flex:0 0 auto; }
+  #topbar .brand span{ color:var(--accent); }
+  #topbar .status{
+    font-family:var(--mono); font-size:11.5px; color:var(--text-dim);
+    display:flex; align-items:center; gap:6px; flex:0 0 auto;
+  }
+  #topbar .status .dot{ width:7px; height:7px; border-radius:50%; background:var(--meter-green); box-shadow:0 0 6px var(--meter-green); }
+  .spacer{ flex:1 1 auto; }
+  .tb-btn{
+    flex:0 0 auto; background:var(--panel-raised); border:1px solid var(--line); color:var(--text);
+    padding:8px 13px; border-radius:6px; font-size:13px; cursor:pointer;
+    text-decoration:none; display:inline-flex; align-items:center; justify-content:center;
+  }
+  .tb-btn:hover{ border-color:var(--text-faint); }
+  .tb-btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .tb-btn.record{ color:var(--danger); border-color:var(--danger); }
+  .tb-btn.record.active{ background:var(--danger); color:#1a1010; animation:pulse 1.1s infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:.55;} }
+  .tb-select{
+    background:var(--panel-raised); border:1px solid var(--line); color:var(--text);
+    padding:7px 8px; border-radius:6px; font-size:12.5px; max-width:150px;
+  }
+  .tb-label{ font-size:11px; color:var(--text-faint); }
+  .tb-group{ display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+  .iface-pill{
+    display:inline-flex; align-items:center; gap:6px; background:var(--panel-raised); border:1px solid var(--line);
+    border-radius:12px; padding:4px 8px 4px 12px; font-size:11.5px; color:var(--text-dim); white-space:nowrap;
+  }
+  .iface-pill button{ background:none; border:none; color:var(--text-faint); font-size:14px; cursor:pointer; line-height:1; padding:0 2px; }
+  .iface-pill button:hover{ color:var(--danger); }
+
+  /* ---------- Recordings panel ---------- */
+  #recordings{
+    flex:0 0 auto; background:var(--panel-recessed); border-bottom:1px solid var(--line);
+    padding:0 14px; max-height:0; overflow:hidden; transition:max-height .25s ease, padding .25s ease;
+  }
+  #recordings.open{ max-height:260px; padding:10px 14px; overflow-y:auto; }
+  #recordings h2{ font-size:11px; text-transform:none; color:var(--text-faint); margin:0 0 8px; font-weight:600; }
+  .rec-row{
+    display:flex; flex-direction:column; gap:6px; padding:8px 0; border-bottom:1px solid var(--line-soft);
+    font-size:13px;
+  }
+  .rec-row:last-child{ border-bottom:none; }
+  .rec-row .rec-top{ display:flex; align-items:center; gap:10px; }
+  .rec-row .name{ flex:1; }
+  .rec-row .meta{ color:var(--text-faint); font-family:var(--mono); font-size:11.5px; }
+  .rec-row a{
+    color:var(--accent); text-decoration:none; border:1px solid var(--accent-dim);
+    padding:5px 10px; border-radius:5px; font-size:12px;
+  }
+  .rec-row audio{ width:100%; height:32px; }
+
+  /* ---------- Console ---------- */
+  #console{
+    flex:1 1 auto; display:flex; overflow-x:auto; overflow-y:hidden;
+    padding:14px; gap:2px; scroll-snap-type:x proximity;
+    align-items:stretch;
+  }
+  #strips{ display:flex; gap:2px; }
+  #emptyState{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    color:var(--text-faint); gap:10px; padding:40px; margin:auto; text-align:center;
+  }
+  #emptyState.hidden{ display:none; }
+  #emptyState button{
+    background:var(--panel-raised); border:1px solid var(--line); color:var(--accent);
+    padding:9px 16px; border-radius:6px; font-size:13.5px; cursor:pointer;
+  }
+
+  .strip{
+    flex:0 0 118px; background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    display:flex; flex-direction:column; scroll-snap-align:start; overflow:hidden;
+  }
+  .strip.armed{ border-color:var(--danger); }
+  .strip.master{ flex:0 0 132px; background:var(--panel-raised); }
+
+  .strip__head{
+    padding:8px 8px 6px; border-bottom:1px solid var(--line-soft); position:relative;
+  }
+  .strip__name{
+    width:100%; background:transparent; border:none; color:var(--text); font-size:12.5px;
+    font-weight:600; padding:2px 0; text-align:center; font-family:var(--sans);
+  }
+  .strip__name:focus{ outline:none; border-bottom:1px solid var(--accent-dim); }
+  .strip__remove{
+    position:absolute; top:4px; right:4px; width:18px; height:18px; border-radius:4px;
+    background:transparent; border:none; color:var(--text-faint); font-size:14px; cursor:pointer; line-height:1;
+  }
+  .strip__remove:hover{ color:var(--danger); }
+
+  .strip__io{ padding:7px 8px; border-bottom:1px solid var(--line-soft); }
+  .io-select{
+    width:100%; background:var(--panel-recessed); border:1px solid var(--line); color:var(--text-dim);
+    font-size:10.5px; padding:5px 4px; border-radius:5px; margin-bottom:5px;
+  }
+  .io-select:last-child{ margin-bottom:0; }
+  .io-error{ color:var(--danger); font-size:10px; padding:2px 0 0; line-height:1.3; }
+
+  .knob-row{ display:flex; justify-content:space-around; padding:9px 4px; border-bottom:1px solid var(--line-soft); }
+  .knob{ display:flex; flex-direction:column; align-items:center; gap:3px; touch-action:none; cursor:ns-resize; user-select:none; }
+  .knob__dial{
+    width:30px; height:30px; border-radius:50%; background:var(--panel-recessed);
+    border:1px solid var(--line); position:relative;
+  }
+  .knob__dial::after{
+    content:''; position:absolute; top:3px; left:50%; width:2px; height:9px; background:var(--accent);
+    transform-origin:50% 12px; transform:translateX(-50%) rotate(var(--rot,0deg)); border-radius:1px;
+  }
+  .knob__label{ font-size:9px; color:var(--text-faint); letter-spacing:.02em; }
+  .knob__val{ font-size:9.5px; color:var(--text-dim); font-family:var(--mono); min-height:11px; }
+
+  .strip__eq{ padding:8px 4px; border-bottom:1px solid var(--line-soft); display:flex; justify-content:space-around; }
+
+  .strip__fader{
+    flex:1; display:flex; flex-direction:column; align-items:center; padding:10px 0 6px; gap:6px; min-height:150px;
+  }
+  .fader-readout{ font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+  .fader-track{
+    position:relative; width:34px; flex:1; background:var(--panel-recessed); border-radius:6px;
+    border:1px solid var(--line); touch-action:none; cursor:ns-resize;
+  }
+  .fader-unity{
+    position:absolute; left:-3px; right:-3px; top:20%; height:1px; background:var(--line-soft);
+  }
+  .fader-cap{
+    position:absolute; left:2px; right:2px; height:20px; background:linear-gradient(var(--panel-raised),var(--panel-recessed));
+    border:1px solid var(--text-faint); border-radius:4px; bottom:0; transform:translateY(50%);
+  }
+  .fader-cap::after{
+    content:''; position:absolute; left:6px; right:6px; top:50%; height:2px; background:var(--accent); transform:translateY(-50%);
+  }
+
+  .strip__meter-row{ display:flex; align-items:stretch; gap:6px; padding:0 8px 8px; min-height:70px; }
+  .meter{
+    position:relative; width:9px; border-radius:3px; overflow:hidden;
+    background:linear-gradient(to top, var(--meter-green) 0%, var(--meter-green) 58%, var(--meter-yellow) 58%, var(--meter-yellow) 84%, var(--meter-red) 84%, var(--meter-red) 100%);
+  }
+  .meter__mask{ position:absolute; top:0; left:0; right:0; height:100%; background:var(--panel-recessed); }
+  .meter-clip{
+    width:9px; height:6px; border-radius:2px; background:var(--panel-recessed); flex:0 0 auto; margin-bottom:4px;
+  }
+  .meter-clip.lit{ background:var(--danger); box-shadow:0 0 5px var(--danger); }
+
+  .strip__bottom{
+    display:flex; gap:4px; padding:7px 8px; border-top:1px solid var(--line-soft);
+  }
+  .xs-btn{
+    flex:1; background:var(--panel-recessed); border:1px solid var(--line); color:var(--text-dim);
+    font-size:10.5px; padding:6px 0; border-radius:5px; cursor:pointer; letter-spacing:.02em;
+  }
+  .xs-btn.on-mute{ background:var(--accent); color:#1a1510; border-color:var(--accent); }
+  .xs-btn.on-solo{ background:var(--accent); color:#1a1510; border-color:var(--accent); }
+  .xs-btn.on-arm{ background:var(--danger); color:#1a1010; border-color:var(--danger); }
+
+  .strip.master .strip__eq, .strip.master .knob-row{ display:none; }
+
+  .strip__fx-btn{
+    width:100%; background:var(--panel-recessed); border:none; border-bottom:1px solid var(--line-soft);
+    color:var(--text-dim); font-size:10.5px; padding:6px 0; cursor:pointer; letter-spacing:.03em;
+  }
+  .strip__fx-btn.active{ color:var(--accent); }
+
+  #fxOverlay, #editOverlay, #boardOverlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:60;
+    display:none; align-items:center; justify-content:center; padding:16px;
+  }
+  #fxOverlay.open, #editOverlay.open, #boardOverlay.open{ display:flex; }
+  #fxPanel, #editPanel, #boardPanel{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    width:100%; max-width:420px; max-height:85vh; overflow-y:auto; padding:16px;
+  }
+  #fxPanel h2, #editPanel h2, #boardPanel h2{ margin:0; font-size:16px; padding-right:24px; }
+  .fx-close{
+    float:right; background:none; border:none; color:var(--text-faint); font-size:20px; cursor:pointer; line-height:1;
+  }
+  .fx-module{ border:1px solid var(--line-soft); border-radius:8px; padding:10px; margin-top:14px; }
+  .fx-module__head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .fx-module__name{ font-weight:600; font-size:13px; }
+  .fx-toggle{
+    width:36px; height:20px; border-radius:10px; background:var(--panel-recessed); border:1px solid var(--line);
+    position:relative; cursor:pointer; flex:0 0 auto;
+  }
+  .fx-toggle::after{
+    content:''; position:absolute; top:1px; left:1px; width:16px; height:16px; border-radius:50%;
+    background:var(--text-faint); transition:transform .15s, background .15s;
+  }
+  .fx-toggle.on{ background:var(--accent-dim); }
+  .fx-toggle.on::after{ transform:translateX(16px); background:var(--accent); }
+  .fx-params{ display:grid; grid-template-columns:repeat(auto-fit,minmax(80px,1fr)); gap:12px 10px; }
+  .fx-param{ display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .fx-param label{ font-size:9.5px; color:var(--text-faint); }
+  .fx-param input[type=range]{ width:100%; accent-color:var(--accent); }
+  .fx-param .fx-param-val{ font-family:var(--mono); font-size:10px; color:var(--text-dim); }
+  .fx-note{ grid-column:1/-1; font-size:11px; color:var(--text-faint); }
+
+  #editWaveWrap{
+    position:relative; width:100%; height:120px; background:var(--panel-recessed);
+    border:1px solid var(--line); border-radius:6px; overflow:hidden; touch-action:none;
+  }
+  #editCanvas{ width:100%; height:100%; display:block; cursor:crosshair; }
+  .edit-handle{
+    position:absolute; top:0; bottom:0; width:18px; margin-left:-9px; cursor:ew-resize; touch-action:none;
+  }
+  .edit-handle::after{
+    content:''; position:absolute; top:0; bottom:0; left:50%; width:3px; background:var(--accent); transform:translateX(-50%);
+  }
+  .edit-hint{ font-size:11px; color:var(--text-faint); margin-top:8px; }
+  .edit-marker-row{
+    display:flex; justify-content:space-between; align-items:center; font-size:11px;
+    color:var(--text-dim); padding:4px 0; border-bottom:1px solid var(--line-soft);
+  }
+  .edit-marker-row button{ background:none; border:none; color:var(--danger); font-size:11px; cursor:pointer; }
+  .edit-actions{ display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+  .edit-actions .tb-btn{ flex:0 0 auto; }
+  .edit-actions .tb-btn.record{ margin-left:auto; }
+
+  #boardPanel{ max-width:720px; }
+  .board-session{ margin-bottom:18px; }
+  .board-session__head{
+    font-size:11px; color:var(--text-faint); margin-bottom:6px; padding-bottom:4px; border-bottom:1px solid var(--line-soft);
+  }
+  .board-row{
+    display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:6px; cursor:pointer;
+    border:1px solid transparent; user-select:none;
+  }
+  .board-row:hover{ background:var(--panel-raised); }
+  .board-row.selected{ border-color:var(--accent); background:rgba(224,165,68,0.12); }
+  .board-row__label{
+    width:110px; flex:0 0 auto; font-size:12px; color:var(--text-dim); overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap;
+  }
+  .board-row__wave{ flex:1; height:36px; background:var(--panel-recessed); border-radius:4px; width:100%; }
+  .board-controls{ margin-top:16px; border-top:1px solid var(--line-soft); padding-top:14px; }
+  .board-empty{ color:var(--text-faint); font-size:13px; padding:20px 0; text-align:center; }
+
+  @media (max-width:480px){
+    .strip{ flex:0 0 100px; }
+    .strip.master{ flex:0 0 116px; }
+  }
+</style>
+</head>
+<body>
+
+  <div id="splash">
+    <h1>Head<span>room</span></h1>
+    <p>A light mixing &amp; recording console that runs in the browser — reads your interface (XR18 and others), mixes with EQ and dynamics, and bounces to WAV. Needs mic/audio permission to power on.</p>
+    <button id="powerBtn">POWER<br>ON</button>
+    <div id="splashError"></div>
+  </div>
+
+  <div id="topbar" style="display:none;">
+    <div class="brand">Head<span>room</span></div>
+    <div class="status"><span class="dot"></span><span id="statusText">—</span></div>
+    <div class="spacer"></div>
+    <div class="tb-group">
+      <span class="tb-label">Add interface</span>
+      <select id="interfaceSelect" class="tb-select"><option value="">Select to add&hellip;</option></select>
+    </div>
+    <div class="tb-group" id="activeInterfacesWrap"></div>
+    <div class="tb-group">
+      <span class="tb-label">Out</span>
+      <select id="outputSelect" class="tb-select"><option>System default</option></select>
+    </div>
+    <button class="tb-btn" id="addTrackBtn">+ Track</button>
+    <button class="tb-btn record" id="recordBtn">● Record</button>
+    <button class="tb-btn" id="recordingsToggle">Recordings <span id="recCount"></span></button>
+    <button class="tb-btn" id="boardBtn">Board</button>
+    <button class="tb-btn" id="saveProjectBtn">Save project</button>
+    <button class="tb-btn" id="loadProjectBtn">Load project</button>
+    <input type="file" id="loadProjectInput" accept="application/json,.json" style="display:none;">
+    <a class="tb-btn" href="manual.html" target="_blank" rel="noopener">Manual</a>
+  </div>
+
+  <div id="recordings">
+    <h2>Recordings</h2>
+    <div id="recordingsList"></div>
+  </div>
+
+  <div id="console" style="display:none;">
+    <div id="emptyState">
+      <div>No tracks yet.</div>
+      <button id="emptyAddTrack">Add your first track</button>
+    </div>
+    <div id="strips"></div>
+    <div class="strip master" id="masterStrip"></div>
+  </div>
+
+  <div id="fxOverlay">
+    <div id="fxPanel">
+      <button class="fx-close" id="fxClose">&times;</button>
+      <h2 id="fxTitle">Effects</h2>
+      <div id="fxBody"></div>
+    </div>
+  </div>
+
+  <div id="editOverlay">
+    <div id="editPanel">
+      <button class="fx-close" id="editClose">&times;</button>
+      <h2 id="editTitle">Edit</h2>
+      <div id="editWaveWrap">
+        <canvas id="editCanvas" width="600" height="120"></canvas>
+        <div class="edit-handle" id="editHandleStart"></div>
+        <div class="edit-handle" id="editHandleEnd"></div>
+      </div>
+      <div class="edit-hint">Drag the edge handles to trim. Tap inside the waveform to add a split point.</div>
+      <div class="fx-params" style="margin-top:12px;">
+        <div class="fx-param"><label>Fade in</label><input type="range" id="editFadeIn" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="editFadeInVal">0ms</div></div>
+        <div class="fx-param"><label>Fade out</label><input type="range" id="editFadeOut" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="editFadeOutVal">0ms</div></div>
+      </div>
+      <div id="editMarkersList" style="margin-top:6px;"></div>
+      <div class="edit-actions">
+        <button class="tb-btn" id="editPreviewBtn">&#9654; Preview</button>
+        <button class="tb-btn" id="editClearMarkersBtn">Clear splits</button>
+        <button class="tb-btn record" id="editExportBtn">Export</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="boardOverlay">
+    <div id="boardPanel">
+      <button class="fx-close" id="boardClose">&times;</button>
+      <h2>Editing Board</h2>
+      <div id="boardSessions"></div>
+      <div class="board-controls">
+        <div class="fx-params">
+          <div class="fx-param"><label>Trim start</label><input type="range" id="boardTrimStart" min="0" max="100" step="1" value="0"><div class="fx-param-val" id="boardTrimStartVal">0%</div></div>
+          <div class="fx-param"><label>Trim end</label><input type="range" id="boardTrimEnd" min="0" max="100" step="1" value="100"><div class="fx-param-val" id="boardTrimEndVal">100%</div></div>
+          <div class="fx-param"><label>Fade in</label><input type="range" id="boardFadeIn" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="boardFadeInVal">0ms</div></div>
+          <div class="fx-param"><label>Fade out</label><input type="range" id="boardFadeOut" min="0" max="2000" step="10" value="0"><div class="fx-param-val" id="boardFadeOutVal">0ms</div></div>
+        </div>
+        <div class="edit-actions">
+          <span id="boardSelCount" style="font-size:11px; color:var(--text-faint); align-self:center;">0 selected</span>
+          <button class="tb-btn record" id="boardExportBtn" style="margin-left:auto;">Export selected</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+'use strict';
+
+/* ============================== Utilities ============================== */
+const clamp = (v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+const dbToGain = db => Math.pow(10, db/20);
+const gainToDb = g => 20*Math.log10(Math.max(g,1e-8));
+const formatDb = db => db<=-59.5 ? '-\u221e' : (db>=0?'+':'')+db.toFixed(1);
+
+function rampGain(param, value, ctx, t=0.012){
+  const now = ctx.currentTime;
+  param.cancelScheduledValues(now);
+  param.setTargetAtTime(value, now, t);
+}
+
+// Fader taper: 0..1 position -> dB. More resolution near unity, matches a real console's law.
+function posToDb(pos){
+  pos = clamp(pos,0,1);
+  if(pos <= 0.8) return -60 + (pos/0.8)*60;      // -60..0 over bottom 80% of travel
+  return ((pos-0.8)/0.2)*6;                       // 0..+6 over top 20%
+}
+function dbToPos(db){
+  db = clamp(db,-60,6);
+  if(db <= 0) return ((db+60)/60)*0.8;
+  return 0.8 + (db/6)*0.2;
+}
+
+/* ============================== WAV encoding ============================== */
+function encodeWAV(channels, sampleRate){
+  const numChannels = channels.length;
+  const numFrames = channels[0] ? channels[0].length : 0;
+  const bytesPerSample = 2;
+  const blockAlign = numChannels*bytesPerSample;
+  const dataSize = numFrames*blockAlign;
+  const buffer = new ArrayBuffer(44+dataSize);
+  const view = new DataView(buffer);
+  const writeStr = (o,s)=>{ for(let i=0;i<s.length;i++) view.setUint8(o+i,s.charCodeAt(i)); };
+  writeStr(0,'RIFF'); view.setUint32(4,36+dataSize,true); writeStr(8,'WAVE');
+  writeStr(12,'fmt '); view.setUint32(16,16,true); view.setUint16(20,1,true);
+  view.setUint16(22,numChannels,true); view.setUint32(24,sampleRate,true);
+  view.setUint32(28,sampleRate*blockAlign,true); view.setUint16(32,blockAlign,true);
+  view.setUint16(34,16,true); writeStr(36,'data'); view.setUint32(40,dataSize,true);
+  let offset=44;
+  for(let i=0;i<numFrames;i++){
+    for(let ch=0;ch<numChannels;ch++){
+      let s = channels[ch][i] || 0;
+      s = clamp(s,-1,1);
+      view.setInt16(offset, s<0 ? s*0x8000 : s*0x7FFF, true);
+      offset+=2;
+    }
+  }
+  return new Blob([buffer], {type:'audio/wav'});
+}
+
+/* ============================== Clip editing helpers ============================== */
+function computePeaks(channelData, numBuckets){
+  const peaks = new Array(numBuckets);
+  const bucketSize = Math.max(1, Math.floor(channelData.length / numBuckets));
+  for(let b=0;b<numBuckets;b++){
+    let min=0, max=0;
+    const start = b*bucketSize;
+    const end = Math.min(start+bucketSize, channelData.length);
+    for(let i=start;i<end;i++){
+      const v = channelData[i];
+      if(v<min) min=v;
+      if(v>max) max=v;
+    }
+    peaks[b] = {min,max};
+  }
+  return peaks;
+}
+
+function drawWaveform(canvas, peaks, trimStartFrac, trimEndFrac, markerFracs){
+  const c2d = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height, mid = h/2;
+  const n = peaks.length;
+  c2d.clearRect(0,0,w,h);
+  for(let x=0;x<w;x++){
+    const idx = Math.min(n-1, Math.floor((x/w)*n));
+    const p = peaks[idx] || {min:0,max:0};
+    const frac = x/w;
+    const inTrim = frac>=trimStartFrac && frac<=trimEndFrac;
+    c2d.strokeStyle = inTrim ? '#E0A544' : '#5C5D63';
+    c2d.beginPath();
+    c2d.moveTo(x, mid + p.min*mid*0.9);
+    c2d.lineTo(x, mid + p.max*mid*0.9 + 0.5);
+    c2d.stroke();
+  }
+  c2d.strokeStyle = '#D9534F';
+  for(const f of markerFracs){
+    const x = Math.round(f*w)+0.5;
+    c2d.beginPath(); c2d.moveTo(x,0); c2d.lineTo(x,h); c2d.stroke();
+  }
+}
+
+// Linear in/out fades applied in place to Float32Array channel data.
+function applyFadesToBuffer(channels, sampleRate, fadeInSec, fadeOutSec){
+  const n = channels[0] ? channels[0].length : 0;
+  const fadeInSamples = clamp(Math.floor(fadeInSec*sampleRate), 0, n);
+  const fadeOutSamples = clamp(Math.floor(fadeOutSec*sampleRate), 0, n);
+  for(const ch of channels){
+    for(let i=0;i<fadeInSamples;i++){ ch[i] *= i/fadeInSamples; }
+    for(let i=0;i<fadeOutSamples;i++){ ch[n-1-i] *= i/fadeOutSamples; }
+  }
+}
+
+/* ===================== AudioWorkletProcessors: recorder + gate ===================== */
+const WORKLET_SRC = `
+class RecorderProcessor extends AudioWorkletProcessor {
+  constructor(){
+    super();
+    this._recording = false;
+    this._flushSize = 128*32;
+    this._buffers = null;
+    this._idx = 0;
+    this.port.onmessage = (e) => {
+      const d = e.data;
+      if (d.cmd === 'start') {
+        this._recording = true;
+        this._buffers = new Array(d.channelCount || 2).fill(0).map(()=> new Float32Array(this._flushSize));
+        this._idx = 0;
+      } else if (d.cmd === 'stop') {
+        this._recording = false;
+        this._flush();
+        this.port.postMessage({ type:'stopped' });
+      }
+    };
+  }
+  _flush(){
+    if(!this._buffers || this._idx === 0) return;
+    const out = this._buffers.map(b => b.slice(0, this._idx));
+    this.port.postMessage({ type:'chunk', channels: out }, out.map(a => a.buffer));
+    this._idx = 0;
+  }
+  process(inputs){
+    if(!this._recording) return true;
+    const input = inputs[0];
+    if(!input || input.length === 0) return true;
+    const frames = input[0].length;
+    for(let f=0; f<frames; f++){
+      for(let ch=0; ch<this._buffers.length; ch++){
+        const src = input[ch] || input[0];
+        this._buffers[ch][this._idx] = src[f];
+      }
+      this._idx++;
+      if(this._idx >= this._flushSize) this._flush();
+    }
+    return true;
+  }
+}
+registerProcessor('recorder-processor', RecorderProcessor);
+
+// Simple threshold noise gate. No native Web Audio node does this, so it needs
+// its own processor: track a peak envelope, open/close a smoothed gain around
+// a threshold. Envelope and gain are shared across channels (typical for a gate).
+class GateProcessor extends AudioWorkletProcessor {
+  constructor(){
+    super();
+    this._env = 0;
+    this._gain = 1;
+    this.thresholdDb = -40;
+    this.enabled = false;
+    this.attack = 0.003;
+    this.release = 0.15;
+    this.port.onmessage = (e) => {
+      const d = e.data;
+      if(d.thresholdDb !== undefined) this.thresholdDb = d.thresholdDb;
+      if(d.enabled !== undefined) this.enabled = d.enabled;
+    };
+  }
+  process(inputs, outputs){
+    const input = inputs[0], output = outputs[0];
+    if(!input || input.length === 0) return true;
+    const thresholdLin = Math.pow(10, this.thresholdDb/20);
+    const attackCoef = Math.exp(-1/(sampleRate*this.attack));
+    const releaseCoef = Math.exp(-1/(sampleRate*this.release));
+    const numFrames = input[0].length;
+    const numCh = input.length;
+    for(let i=0; i<numFrames; i++){
+      let peak = 0;
+      for(let ch=0; ch<numCh; ch++){ const a = Math.abs(input[ch][i]); if(a>peak) peak = a; }
+      this._env = peak > this._env ? attackCoef*this._env + (1-attackCoef)*peak : releaseCoef*this._env + (1-releaseCoef)*peak;
+      const target = (!this.enabled || this._env >= thresholdLin) ? 1 : 0;
+      this._gain += (target - this._gain) * 0.01;
+      for(let ch=0; ch<numCh; ch++){ output[ch][i] = input[ch][i] * this._gain; }
+    }
+    return true;
+  }
+}
+registerProcessor('gate-processor', GateProcessor);
+`;
+
+/* ============================== Audio Engine ============================== */
+const Engine = {
+  ctx: null,
+  masterGain: null,
+  masterLimiter: null,
+  masterAnalyser: null,
+  silentSink: null,
+  inputDevices: [],
+  outputDevices: [],
+  interfaces: new Map(), // deviceId -> { deviceId, stream, sourceNode, splitterNode, channelCount, label }
+  tracks: [],
+  trackSeq: 0,
+  sessionSeq: 0,
+  recording: false,
+  activeRecorders: [], // {node, kind, name, channelCount}
+  finishedChunks: null, // Map key -> array of {channels:[Float32Array...]}
+
+  async powerOn(){
+    this.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint:'interactive' });
+    if(this.ctx.state === 'suspended'){ try{ await this.ctx.resume(); }catch(e){} }
+
+    // Unlock device labels
+    let unlockStream = null;
+    try{
+      unlockStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+    }catch(e){
+      throw new Error('Microphone / audio permission was not granted. Headroom needs it to list and use your input devices.');
+    }
+    if(unlockStream) unlockStream.getTracks().forEach(t=>t.stop());
+
+    await this.refreshDevices();
+
+    // Recorder + gate worklet
+    const blob = new Blob([WORKLET_SRC], {type:'application/javascript'});
+    const url = URL.createObjectURL(blob);
+    try{
+      await this.ctx.audioWorklet.addModule(url);
+    }catch(e){
+      throw new Error("Couldn't load the audio engine module. This almost always means the page was opened directly as a local file (file://) \u2014 browsers block worklets there. Host it (e.g. GitHub Pages) or serve it locally (e.g. `python3 -m http.server`) and open it over http(s) instead.");
+    }
+
+    // Master bus: sum -> limiter -> analyser -> destination
+    this.masterGain = this.ctx.createGain();
+    this.masterGain.gain.value = 1;
+
+    this.masterLimiter = this.ctx.createDynamicsCompressor();
+    this.masterLimiter.threshold.value = -1;
+    this.masterLimiter.knee.value = 0;
+    this.masterLimiter.ratio.value = 20;
+    this.masterLimiter.attack.value = 0.003;
+    this.masterLimiter.release.value = 0.25;
+
+    this.masterAnalyser = this.ctx.createAnalyser();
+    this.masterAnalyser.fftSize = 1024;
+
+    this.masterGain.connect(this.masterLimiter);
+    this.masterLimiter.connect(this.masterAnalyser);
+    this.masterAnalyser.connect(this.ctx.destination);
+
+    // keep-alive sink for worklet recorder nodes
+    this.silentSink = this.ctx.createGain();
+    this.silentSink.gain.value = 0;
+    this.silentSink.connect(this.ctx.destination);
+  },
+
+  async refreshDevices(){
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    this.inputDevices = devices.filter(d=>d.kind==='audioinput');
+    this.outputDevices = devices.filter(d=>d.kind==='audiooutput');
+  },
+
+  supportsSinkSelect(){
+    return typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype;
+  },
+
+  async setOutputDevice(deviceId){
+    if(!this.supportsSinkSelect()) return false;
+    try{ await this.ctx.setSinkId(deviceId); return true; }
+    catch(e){ console.warn('setSinkId failed', e); return false; }
+  },
+
+  // Multiple interfaces can be open at once so different tracks can pull from
+  // different physical devices, not just different channels of one device.
+  async addInterfaceDevice(deviceId){
+    if(this.interfaces.has(deviceId)) return { ok:true, alreadyActive:true };
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio:{
+          deviceId:{ exact: deviceId },
+          echoCancellation:false, noiseSuppression:false, autoGainControl:false,
+          channelCount:{ ideal:18, max:32 }
+        }
+      });
+      const audioTrack = stream.getAudioTracks()[0];
+      const settings = audioTrack.getSettings ? audioTrack.getSettings() : {};
+      const channelCount = clamp(settings.channelCount || 2, 1, 32);
+      const sourceNode = this.ctx.createMediaStreamSource(stream);
+      const splitterNode = this.ctx.createChannelSplitter(channelCount);
+      sourceNode.connect(splitterNode);
+      this.interfaces.set(deviceId, { deviceId, stream, sourceNode, splitterNode, channelCount, label: audioTrack.label || 'Input device' });
+      UI.onInterfacesChanged();
+      return { ok:true, channelCount };
+    }catch(e){
+      return { ok:false, msg:"Couldn't open that device \u2014 check permissions, or that nothing else has it open." };
+    }
+  },
+
+  removeInterfaceDevice(deviceId){
+    const iface = this.interfaces.get(deviceId);
+    if(!iface) return;
+    for(const t of this.tracks){
+      if(t.inputDeviceId === deviceId) t.setInputSource(null, null);
+    }
+    try{ iface.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+    try{ iface.sourceNode.disconnect(); }catch(e){}
+    try{ iface.splitterNode.disconnect(); }catch(e){}
+    this.interfaces.delete(deviceId);
+    UI.onInterfacesChanged();
+  },
+
+  addTrack(){
+    const id = 'trk'+(++this.trackSeq);
+    const track = new Track(id, this);
+    this.tracks.push(track);
+    this.updateMuteSoloStates();
+    return track;
+  },
+
+  removeTrack(track){
+    track.dispose();
+    this.tracks = this.tracks.filter(t=>t!==track);
+    this.updateMuteSoloStates();
+  },
+
+  updateMuteSoloStates(){
+    const anySolo = this.tracks.some(t=>t.solo);
+    for(const t of this.tracks){
+      const audible = anySolo ? t.solo : !t.muted;
+      rampGain(t.nodes.muteGain.gain, audible?1:0, this.ctx);
+    }
+  },
+
+  async startRecording(){
+    const armed = this.tracks.filter(t=>t.armed && t.hasInput);
+    if(armed.length===0){
+      return { ok:false, msg:'Arm at least one track (with an input selected) before recording.' };
+    }
+    this.finishedChunks = new Map();
+    this.activeRecorders = [];
+
+    const makeRecorder = (sourceNode, channelCount, key, name) => {
+      const node = new AudioWorkletNode(this.ctx, 'recorder-processor', {
+        numberOfInputs:1, numberOfOutputs:1, channelCount, channelCountMode:'explicit', outputChannelCount:[channelCount]
+      });
+      const chunks = [];
+      this.finishedChunks.set(key, { channels: Array.from({length:channelCount}, ()=>[]), name });
+      node.port.onmessage = (e)=>{
+        const d = e.data;
+        if(d.type==='chunk'){
+          const rec = this.finishedChunks.get(key);
+          d.channels.forEach((arr,ch)=> rec.channels[ch].push(arr));
+        } else if(d.type==='stopped'){
+          this._recorderStopped(key);
+        }
+      };
+      sourceNode.connect(node);
+      node.connect(this.silentSink);
+      node.port.postMessage({ cmd:'start', channelCount });
+      this.activeRecorders.push({ node, key, sourceNode });
+    };
+
+    for(const t of armed){
+      makeRecorder(t.nodes.recordTap, 2, 'track:'+t.id, t.name);
+    }
+    makeRecorder(this.masterLimiter, 2, 'master', 'Master mix'); // post-limiter: what's actually heard
+
+    this.recording = true;
+    return { ok:true };
+  },
+
+  _pendingStops: 0,
+  async stopRecording(){
+    this._pendingStops = this.activeRecorders.length;
+    for(const r of this.activeRecorders){
+      r.node.port.postMessage({ cmd:'stop' });
+    }
+    this.recording = false;
+  },
+
+  _recorderStopped(key){
+    this._pendingStops--;
+    const rec = this.activeRecorders.find(r=>r.key===key);
+    if(rec){
+      try{ rec.sourceNode.disconnect(rec.node); }catch(e){}
+      try{ rec.node.disconnect(); }catch(e){}
+    }
+    if(this._pendingStops <= 0){
+      this._finalizeRecordings();
+    }
+  },
+
+  _finalizeRecordings(){
+    const sessionId = ++this.sessionSeq;
+    const results = [];
+    for(const [key, rec] of this.finishedChunks.entries()){
+      const flatChannels = rec.channels.map(chunkList=>{
+        let total = 0;
+        chunkList.forEach(c=>total+=c.length);
+        const out = new Float32Array(total);
+        let o=0;
+        chunkList.forEach(c=>{ out.set(c,o); o+=c.length; });
+        return out;
+      });
+      if(flatChannels[0] && flatChannels[0].length>0){
+        const blob = encodeWAV(flatChannels, this.ctx.sampleRate);
+        results.push({ name: rec.name, blob, url: URL.createObjectURL(blob), frames: flatChannels[0].length, sessionId });
+      }
+    }
+    this.activeRecorders = [];
+    this.finishedChunks = null;
+    UI.onRecordingsReady(results);
+  }
+};
+
+/* ============================== Track ============================== */
+class Track{
+  constructor(id, engine){
+    this.id = id;
+    this.engine = engine;
+    this.name = 'Track '+id.replace('trk','');
+    this.muted = false;
+    this.solo = false;
+    this.armed = false;
+    this.hasInput = false;
+    this.inputDeviceId = null; // which active interface this track is pulling from
+    this.inputChannel = null;  // which channel of that interface
+    this.faderDb = 0;
+    this.trimDb = 0;
+    this.pan = 0;
+    this.eq = { low:0, mid:0, high:0 };
+    this.fx = {
+      gate: { enabled:false, thresholdDb:-40 },
+      comp: { enabled:false, thresholdDb:-20, ratio:4, attack:0.01, release:0.25 },
+      delay: { enabled:false, timeMs:300, feedback:0.3, mix:0.35 }
+    };
+
+    const ctx = engine.ctx;
+    const n = this.nodes = {};
+    n.trim = ctx.createGain(); n.trim.gain.value = 1;
+
+    n.gate = new AudioWorkletNode(ctx, 'gate-processor', {
+      numberOfInputs:1, numberOfOutputs:1, channelCount:2, channelCountMode:'explicit', outputChannelCount:[2]
+    });
+
+    n.comp = ctx.createDynamicsCompressor();
+    n.comp.threshold.value = 0; n.comp.ratio.value = 1; // transparent until enabled
+    n.comp.attack.value = 0.01; n.comp.release.value = 0.25; n.comp.knee.value = 6;
+
+    n.eqLow = new BiquadFilterNode(ctx, { type:'lowshelf', frequency:100, gain:0 });
+    n.eqMid = new BiquadFilterNode(ctx, { type:'peaking', frequency:1000, Q:1, gain:0 });
+    n.eqHigh = new BiquadFilterNode(ctx, { type:'highshelf', frequency:8000, gain:0 });
+
+    // Delay as a parallel send: dry always passes through eqHigh->pan directly;
+    // the wet path taps off, runs through the delay+feedback loop, and sums back in.
+    n.delayNode = ctx.createDelay(2.0); n.delayNode.delayTime.value = 0.3;
+    n.delayFeedback = ctx.createGain(); n.delayFeedback.gain.value = 0.3;
+    n.delayWet = ctx.createGain(); n.delayWet.gain.value = 0; // 0 = off by default
+
+    n.pan = new StereoPannerNode(ctx, { pan:0 });
+    n.recordTap = ctx.createGain(); n.recordTap.gain.value = 1; // post-EQ/pan, pre-mute/fader
+    n.muteGain = ctx.createGain(); n.muteGain.gain.value = 1;
+    n.fader = ctx.createGain(); n.fader.gain.value = 1;
+    n.analyser = ctx.createAnalyser(); n.analyser.fftSize = 1024;
+
+    n.trim.connect(n.gate);
+    n.gate.connect(n.comp);
+    n.comp.connect(n.eqLow);
+    n.eqLow.connect(n.eqMid); n.eqMid.connect(n.eqHigh);
+    n.eqHigh.connect(n.pan);            // dry
+    n.eqHigh.connect(n.delayNode);      // wet send
+    n.delayNode.connect(n.delayFeedback);
+    n.delayFeedback.connect(n.delayNode);
+    n.delayNode.connect(n.delayWet);
+    n.delayWet.connect(n.pan);          // wet return (sums with dry at pan's input)
+    n.pan.connect(n.recordTap);
+    n.recordTap.connect(n.muteGain);
+    n.muteGain.connect(n.fader);
+    n.fader.connect(n.analyser);
+    n.analyser.connect(engine.silentSink); // keeps the analyser "live" so it actually gets processed each frame
+    n.fader.connect(engine.masterGain);
+
+    this._clipUntil = 0;
+    this._buildDOM();
+  }
+
+  // deviceId/channelIdx identify a channel on one specific active interface,
+  // independently of what any other track is using.
+  setInputSource(deviceId, channelIdx){
+    this._clearError();
+    if(this._channelSource){
+      try{ this._channelSource.disconnect(this.nodes.trim); }catch(e){}
+      this._channelSource = null;
+    }
+    if(deviceId==null || channelIdx==null || channelIdx===''){
+      this.inputDeviceId = null; this.inputChannel = null; this.hasInput = false;
+      return;
+    }
+    const iface = this.engine.interfaces.get(deviceId);
+    const idx = Number(channelIdx);
+    if(!iface || idx>=iface.channelCount){
+      this.inputDeviceId = null; this.inputChannel = null; this.hasInput = false;
+      return;
+    }
+    try{
+      iface.splitterNode.connect(this.nodes.trim, idx, 0);
+      this._channelSource = iface.splitterNode;
+      this.inputDeviceId = deviceId;
+      this.inputChannel = idx;
+      this.hasInput = true;
+    }catch(e){
+      this.inputDeviceId = null; this.inputChannel = null; this.hasInput = false;
+      this._showError('Could not connect to that channel.');
+    }
+  }
+
+  populateChannelOptions(){
+    const cur = this.inSelect.value; // "deviceId::channelIdx"
+    const engineInterfaces = this.engine.interfaces;
+    if(engineInterfaces.size===0){
+      this.inSelect.innerHTML = '<option value="">No interface active</option>';
+      if(this.inputDeviceId!==null) this.setInputSource(null,null);
+      return;
+    }
+    let opts = '<option value="">No input</option>';
+    for(const [deviceId, iface] of engineInterfaces){
+      for(let i=0;i<iface.channelCount;i++){
+        opts += `<option value="${deviceId}::${i}">${iface.label} \u2014 Ch ${i+1}</option>`;
+      }
+    }
+    this.inSelect.innerHTML = opts;
+    const curDeviceId = cur ? cur.split('::')[0] : null;
+    if(cur!=='' && curDeviceId && engineInterfaces.has(curDeviceId)){
+      this.inSelect.value = cur;
+    }else if(this.inputDeviceId!==null){
+      this.setInputSource(null,null);
+      this.inSelect.value = '';
+    }
+  }
+
+  setTrim(db){ this.trimDb=db; rampGain(this.nodes.trim.gain, dbToGain(db), this.engine.ctx); }
+  setPan(p){ this.pan=p; this.nodes.pan.pan.setTargetAtTime(p, this.engine.ctx.currentTime, 0.01); }
+  setEq(band, db){
+    this.eq[band]=db;
+    const map = { low:this.nodes.eqLow, mid:this.nodes.eqMid, high:this.nodes.eqHigh };
+    map[band].gain.setTargetAtTime(db, this.engine.ctx.currentTime, 0.01);
+  }
+  setFaderDb(db){ this.faderDb=db; rampGain(this.nodes.fader.gain, dbToGain(db), this.engine.ctx); }
+
+  setGateEnabled(v){ this.fx.gate.enabled=!!v; this.nodes.gate.port.postMessage({enabled:this.fx.gate.enabled}); this.updateFxIndicator(); }
+  setGateThreshold(db){ this.fx.gate.thresholdDb=db; this.nodes.gate.port.postMessage({thresholdDb:db}); }
+
+  setCompEnabled(v){
+    this.fx.comp.enabled=!!v;
+    if(this.fx.comp.enabled) this._applyCompParams();
+    else{
+      const c=this.nodes.comp, now=this.engine.ctx.currentTime;
+      c.threshold.setTargetAtTime(0, now, 0.02);
+      c.ratio.setTargetAtTime(1, now, 0.02);
+    }
+    this.updateFxIndicator();
+  }
+  setCompParam(name, value){ this.fx.comp[name]=value; if(this.fx.comp.enabled) this._applyCompParams(); }
+  _applyCompParams(){
+    const c=this.nodes.comp, now=this.engine.ctx.currentTime;
+    c.threshold.setTargetAtTime(this.fx.comp.thresholdDb, now, 0.02);
+    c.ratio.setTargetAtTime(this.fx.comp.ratio, now, 0.02);
+    c.attack.setTargetAtTime(this.fx.comp.attack, now, 0.02);
+    c.release.setTargetAtTime(this.fx.comp.release, now, 0.02);
+  }
+
+  setDelayEnabled(v){
+    this.fx.delay.enabled=!!v;
+    rampGain(this.nodes.delayWet.gain, this.fx.delay.enabled ? this.fx.delay.mix : 0, this.engine.ctx);
+    this.updateFxIndicator();
+  }
+  setDelayParam(name, value){
+    this.fx.delay[name]=value;
+    const now=this.engine.ctx.currentTime;
+    if(name==='timeMs') this.nodes.delayNode.delayTime.setTargetAtTime(value/1000, now, 0.02);
+    if(name==='feedback') this.nodes.delayFeedback.gain.setTargetAtTime(value, now, 0.02);
+    if(name==='mix' && this.fx.delay.enabled) this.nodes.delayWet.gain.setTargetAtTime(value, now, 0.02);
+  }
+
+  updateFxIndicator(){
+    const active = this.fx.gate.enabled || this.fx.comp.enabled || this.fx.delay.enabled;
+    if(this.fxBtn) this.fxBtn.classList.toggle('active', active);
+  }
+
+  toggleMute(){ this.setMuted(!this.muted); }
+  toggleSolo(){ this.setSolo(!this.solo); }
+  toggleArm(){ this.setArmed(!this.armed); }
+  setMuted(v){ this.muted=!!v; this.engine.updateMuteSoloStates(); this._syncButtons(); }
+  setSolo(v){ this.solo=!!v; this.engine.updateMuteSoloStates(); this._syncButtons(); }
+  setArmed(v){
+    this.armed=!!v;
+    this.el.classList.toggle('armed', this.armed);
+    this.armBtn.classList.toggle('on-arm', this.armed);
+  }
+
+  dispose(){
+    if(this._channelSource){ try{ this._channelSource.disconnect(this.nodes.trim); }catch(e){} }
+    for(const key of ['gate','comp','eqLow','eqMid','eqHigh','delayNode','delayFeedback','delayWet','pan','recordTap','muteGain','fader','analyser']){
+      try{ this.nodes[key].disconnect(); }catch(e){}
+    }
+    if(this.el) this.el.remove();
+  }
+
+  _showError(msg){ this.errEl.textContent = msg; }
+  _clearError(){ this.errEl.textContent = ''; }
+
+  _syncButtons(){
+    this.muteBtn.classList.toggle('on-mute', this.muted);
+    this.soloBtn.classList.toggle('on-solo', this.solo);
+  }
+
+  _buildDOM(){
+    const el = document.createElement('div');
+    el.className = 'strip';
+    el.innerHTML = `
+      <div class="strip__head">
+        <button class="strip__remove" title="Remove track">\u00d7</button>
+        <input class="strip__name" value="${this.name}" maxlength="16">
+      </div>
+      <div class="strip__io">
+        <select class="io-select in-select"><option value="">No input</option></select>
+        <div class="io-error"></div>
+      </div>
+      <div class="knob-row">
+        <div class="knob" data-knob="trim"><div class="knob__dial"></div><div class="knob__label">Trim</div><div class="knob__val">0.0</div></div>
+        <div class="knob" data-knob="pan"><div class="knob__dial"></div><div class="knob__label">Pan</div><div class="knob__val">C</div></div>
+      </div>
+      <div class="strip__eq">
+        <div class="knob" data-knob="low"><div class="knob__dial"></div><div class="knob__label">Low</div><div class="knob__val">0.0</div></div>
+        <div class="knob" data-knob="mid"><div class="knob__dial"></div><div class="knob__label">Mid</div><div class="knob__val">0.0</div></div>
+        <div class="knob" data-knob="high"><div class="knob__dial"></div><div class="knob__label">High</div><div class="knob__val">0.0</div></div>
+      </div>
+      <button class="strip__fx-btn" data-fx-btn>FX</button>
+      <div class="strip__fader">
+        <div class="fader-readout">0.0</div>
+        <div class="fader-track">
+          <div class="fader-unity"></div>
+          <div class="fader-cap"></div>
+        </div>
+      </div>
+      <div class="strip__meter-row">
+        <div style="flex:1; display:flex; flex-direction:column; align-items:center;">
+          <div class="meter-clip"></div>
+          <div class="meter" style="flex:1; align-self:stretch;"><div class="meter__mask"></div></div>
+        </div>
+      </div>
+      <div class="strip__bottom">
+        <button class="xs-btn mute-btn">Mute</button>
+        <button class="xs-btn solo-btn">Solo</button>
+        <button class="xs-btn arm-btn">Arm</button>
+      </div>
+    `;
+    this.el = el;
+    this.inSelect = el.querySelector('.in-select');
+    this.errEl = el.querySelector('.io-error');
+    this.muteBtn = el.querySelector('.mute-btn');
+    this.soloBtn = el.querySelector('.solo-btn');
+    this.armBtn = el.querySelector('.arm-btn');
+    this.faderCap = el.querySelector('.fader-cap');
+    this.faderTrack = el.querySelector('.fader-track');
+    this.faderReadout = el.querySelector('.fader-readout');
+    this.meterMask = el.querySelector('.meter__mask');
+    this.clipLight = el.querySelector('.meter-clip');
+
+    el.querySelector('.strip__remove').onclick = ()=> UI.confirmRemoveTrack(this);
+    this.nameInput = el.querySelector('.strip__name');
+    this.nameInput.oninput = (e)=>{ this.name = e.target.value || this.name; };
+    this.inSelect.onchange = (e)=>{
+      const v = e.target.value;
+      if(!v) this.setInputSource(null,null);
+      else{ const [devId, ch] = v.split('::'); this.setInputSource(devId, ch); }
+    };
+    this.muteBtn.onclick = ()=> this.toggleMute();
+    this.soloBtn.onclick = ()=> this.toggleSolo();
+    this.armBtn.onclick = ()=> this.toggleArm();
+    this.fxBtn = el.querySelector('[data-fx-btn]');
+    this.fxBtn.onclick = ()=> UI.openFxPanel(this);
+
+    this.knobControls = {
+      trim: UI.wireKnob(el.querySelector('[data-knob="trim"]'), -20,20,0, v=>this.setTrim(v), v=>formatDb(v)),
+      pan: UI.wireKnob(el.querySelector('[data-knob="pan"]'), -1,1,0, v=>this.setPan(v), v=> v===0?'C':(v<0?'L'+Math.round(-v*100):'R'+Math.round(v*100))),
+      low: UI.wireKnob(el.querySelector('[data-knob="low"]'), -15,15,0, v=>this.setEq('low',v), v=>formatDb(v)),
+      mid: UI.wireKnob(el.querySelector('[data-knob="mid"]'), -15,15,0, v=>this.setEq('mid',v), v=>formatDb(v)),
+      high: UI.wireKnob(el.querySelector('[data-knob="high"]'), -15,15,0, v=>this.setEq('high',v), v=>formatDb(v))
+    };
+    this.faderControl = UI.wireFader(this);
+  }
+
+}
+
+/* ============================== UI ============================== */
+const UI = {
+  els: {},
+
+  init(){
+    this.els.splash = document.getElementById('splash');
+    this.els.splashError = document.getElementById('splashError');
+    this.els.powerBtn = document.getElementById('powerBtn');
+    this.els.topbar = document.getElementById('topbar');
+    this.els.consoleEl = document.getElementById('console');
+    this.els.strips = document.getElementById('strips');
+    this.els.masterStrip = document.getElementById('masterStrip');
+    this.els.emptyState = document.getElementById('emptyState');
+    this.els.statusText = document.getElementById('statusText');
+    this.els.addTrackBtn = document.getElementById('addTrackBtn');
+    this.els.emptyAddTrack = document.getElementById('emptyAddTrack');
+    this.els.recordBtn = document.getElementById('recordBtn');
+    this.els.interfaceSelect = document.getElementById('interfaceSelect');
+    this.els.outputSelect = document.getElementById('outputSelect');
+    this.els.recordingsToggle = document.getElementById('recordingsToggle');
+    this.els.recordings = document.getElementById('recordings');
+    this.els.recordingsList = document.getElementById('recordingsList');
+    this.els.recCount = document.getElementById('recCount');
+    this.els.saveProjectBtn = document.getElementById('saveProjectBtn');
+    this.els.loadProjectBtn = document.getElementById('loadProjectBtn');
+    this.els.loadProjectInput = document.getElementById('loadProjectInput');
+    this.els.fxOverlay = document.getElementById('fxOverlay');
+    this.els.fxTitle = document.getElementById('fxTitle');
+    this.els.fxBody = document.getElementById('fxBody');
+    this.els.fxClose = document.getElementById('fxClose');
+    this.els.fxClose.onclick = ()=> this.els.fxOverlay.classList.remove('open');
+    this.els.fxOverlay.onclick = (e)=>{ if(e.target===this.els.fxOverlay) this.els.fxOverlay.classList.remove('open'); };
+
+    this.els.editOverlay = document.getElementById('editOverlay');
+    this.els.editTitle = document.getElementById('editTitle');
+    this.els.editClose = document.getElementById('editClose');
+    this.els.editWaveWrap = document.getElementById('editWaveWrap');
+    this.els.editCanvas = document.getElementById('editCanvas');
+    this.els.editHandleStart = document.getElementById('editHandleStart');
+    this.els.editHandleEnd = document.getElementById('editHandleEnd');
+    this.els.editFadeIn = document.getElementById('editFadeIn');
+    this.els.editFadeInVal = document.getElementById('editFadeInVal');
+    this.els.editFadeOut = document.getElementById('editFadeOut');
+    this.els.editFadeOutVal = document.getElementById('editFadeOutVal');
+    this.els.editMarkersList = document.getElementById('editMarkersList');
+    this.els.editPreviewBtn = document.getElementById('editPreviewBtn');
+    this.els.editClearMarkersBtn = document.getElementById('editClearMarkersBtn');
+    this.els.editExportBtn = document.getElementById('editExportBtn');
+    this.els.editClose.onclick = ()=>{ this._stopPreview(); this.els.editOverlay.classList.remove('open'); };
+    this.els.editOverlay.onclick = (e)=>{ if(e.target===this.els.editOverlay){ this._stopPreview(); this.els.editOverlay.classList.remove('open'); } };
+    this._wireEditHandles();
+    this._wireEditControls();
+
+    this.els.boardBtn = document.getElementById('boardBtn');
+    this.els.boardOverlay = document.getElementById('boardOverlay');
+    this.els.boardPanel = document.getElementById('boardPanel');
+    this.els.boardClose = document.getElementById('boardClose');
+    this.els.boardSessions = document.getElementById('boardSessions');
+    this.els.boardTrimStart = document.getElementById('boardTrimStart');
+    this.els.boardTrimStartVal = document.getElementById('boardTrimStartVal');
+    this.els.boardTrimEnd = document.getElementById('boardTrimEnd');
+    this.els.boardTrimEndVal = document.getElementById('boardTrimEndVal');
+    this.els.boardFadeIn = document.getElementById('boardFadeIn');
+    this.els.boardFadeInVal = document.getElementById('boardFadeInVal');
+    this.els.boardFadeOut = document.getElementById('boardFadeOut');
+    this.els.boardFadeOutVal = document.getElementById('boardFadeOutVal');
+    this.els.boardSelCount = document.getElementById('boardSelCount');
+    this.els.boardExportBtn = document.getElementById('boardExportBtn');
+    this.els.boardBtn.onclick = ()=> this.openBoard();
+    this._boardSelection = new Set();
+    this._wireBoardControls();
+
+    this.els.powerBtn.onclick = ()=>this.powerOn();
+    this.els.addTrackBtn.onclick = ()=>this.addTrack();
+    this.els.emptyAddTrack.onclick = ()=>this.addTrack();
+    this.els.recordBtn.onclick = ()=>this.toggleRecord();
+    this.els.recordingsToggle.onclick = ()=> this.els.recordings.classList.toggle('open');
+    this.els.outputSelect.onchange = (e)=> Engine.setOutputDevice(e.target.value);
+    this.els.interfaceSelect.onchange = async (e)=>{
+      const deviceId = e.target.value;
+      if(!deviceId) return;
+      const res = await Engine.addInterfaceDevice(deviceId);
+      e.target.value = ''; // reset to placeholder so it's ready to add another
+      if(!res.ok) alert(res.msg);
+    };
+    this.els.activeInterfacesWrap = document.getElementById('activeInterfacesWrap');
+    this.els.saveProjectBtn.onclick = ()=> this.saveProject();
+    this.els.loadProjectBtn.onclick = ()=> this.els.loadProjectInput.click();
+    this.els.loadProjectInput.onchange = (e)=>{
+      const file = e.target.files[0];
+      if(file) this.loadProjectFile(file);
+      e.target.value = '';
+    };
+
+    this._recordings = [];
+  },
+
+  async powerOn(){
+    this.els.powerBtn.disabled = true;
+    this.els.splashError.textContent = '';
+    try{
+      await Engine.powerOn();
+    }catch(e){
+      this.els.splashError.textContent = e.message || String(e);
+      this.els.powerBtn.disabled = false;
+      return;
+    }
+    this.els.splash.classList.add('hidden');
+    this.els.topbar.style.display = 'flex';
+    this.els.consoleEl.style.display = 'flex';
+    this._buildMasterStrip();
+    this._populateOutputs();
+    this._populateInterfaceOptions();
+    this._updateStatus();
+    if(Engine.inputDevices.length>0){
+      await Engine.addInterfaceDevice(Engine.inputDevices[0].deviceId);
+    }
+    this.addTrack();
+    this._startMeterLoop();
+    document.addEventListener('visibilitychange', ()=>{
+      this._meterActive = document.visibilityState === 'visible';
+    });
+    navigator.mediaDevices.ondevicechange = async ()=>{
+      await Engine.refreshDevices();
+      this._populateInterfaceOptions();
+      this._populateOutputs();
+    };
+  },
+
+  _populateInterfaceOptions(){
+    const sel = this.els.interfaceSelect;
+    sel.innerHTML = '<option value="">Select to add\u2026</option>' +
+      Engine.inputDevices
+        .filter(d=>!Engine.interfaces.has(d.deviceId))
+        .map(d=>`<option value="${d.deviceId}">${d.label || 'Input device'}</option>`).join('');
+  },
+
+  onInterfacesChanged(){
+    this._populateInterfaceOptions();
+    this._renderActiveInterfaces();
+    for(const t of Engine.tracks) t.populateChannelOptions();
+  },
+
+  _renderActiveInterfaces(){
+    const wrap = this.els.activeInterfacesWrap;
+    wrap.innerHTML = '';
+    for(const [deviceId, iface] of Engine.interfaces){
+      const pill = document.createElement('span');
+      pill.className = 'iface-pill';
+      pill.innerHTML = `<span>${iface.label} (${iface.channelCount}ch)</span>`;
+      const rm = document.createElement('button');
+      rm.textContent = '\u00d7';
+      rm.title = 'Remove this interface';
+      rm.onclick = ()=> Engine.removeInterfaceDevice(deviceId);
+      pill.appendChild(rm);
+      wrap.appendChild(pill);
+    }
+  },
+
+  _updateStatus(){
+    const ctx = Engine.ctx;
+    const lat = ctx.baseLatency ? Math.round(ctx.baseLatency*1000) : null;
+    this.els.statusText.textContent = ctx.sampleRate + ' Hz' + (lat!=null ? ' \u00b7 ~'+lat+'ms' : '');
+  },
+
+  _populateOutputs(){
+    const sel = this.els.outputSelect;
+    if(!Engine.supportsSinkSelect()){
+      sel.innerHTML = '<option>System default (use OS sound settings)</option>';
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    sel.innerHTML = '<option value="">System default</option>' +
+      Engine.outputDevices.map(d=>`<option value="${d.deviceId}">${d.label || 'Output device'}</option>`).join('');
+  },
+
+  addTrack(){
+    const t = Engine.addTrack();
+    this.els.strips.appendChild(t.el);
+    t.populateChannelOptions();
+    this._syncEmptyState();
+  },
+
+  confirmRemoveTrack(track){
+    if(Engine.recording){ alert('Stop recording before removing a track.'); return; }
+    Engine.removeTrack(track);
+    this._syncEmptyState();
+  },
+
+  _syncEmptyState(){
+    this.els.emptyState.classList.toggle('hidden', Engine.tracks.length>0);
+  },
+
+  serializeProject(){
+    return {
+      app:'headroom', version:2, savedAt:new Date().toISOString(),
+      interfaces: Array.from(Engine.interfaces.values()).map(i=>({ deviceId:i.deviceId, label:i.label })),
+      master: { faderDb: this.masterFaderState ? this.masterFaderState.faderDb : 0 },
+      tracks: Engine.tracks.map(t=>({
+        name:t.name, inputDeviceId:t.inputDeviceId, inputChannel:t.inputChannel, trimDb:t.trimDb, pan:t.pan,
+        eq:{ low:t.eq.low, mid:t.eq.mid, high:t.eq.high }, faderDb:t.faderDb,
+        muted:t.muted, solo:t.solo, armed:t.armed,
+        fx:{ gate:{...t.fx.gate}, comp:{...t.fx.comp}, delay:{...t.fx.delay} }
+      }))
+    };
+  },
+
+  saveProject(){
+    const data = this.serializeProject();
+    const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'headroom-project-'+Date.now()+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+  },
+
+  async loadProjectFile(file){
+    if(Engine.recording){ alert('Stop recording before loading a project.'); return; }
+    let data;
+    try{
+      data = JSON.parse(await file.text());
+    }catch(e){ alert('That file could not be read as a Headroom project.'); return; }
+    if(!data || data.app!=='headroom'){ alert("This doesn't look like a Headroom project file."); return; }
+
+    let ifaceMsg = '';
+    const savedInterfaces = data.interfaces || (data.interface ? [data.interface] : []); // v1 back-compat
+    const deviceIdMap = {}; // saved deviceId -> resolved current deviceId
+    for(const saved of savedInterfaces){
+      let match = Engine.inputDevices.find(d=>d.deviceId===saved.deviceId);
+      if(!match && saved.label) match = Engine.inputDevices.find(d=>d.label===saved.label);
+      if(match){
+        deviceIdMap[saved.deviceId] = match.deviceId;
+        const res = await Engine.addInterfaceDevice(match.deviceId);
+        if(!res.ok) ifaceMsg += ' Could not reopen "'+(saved.label||match.label)+'".';
+      }else{
+        ifaceMsg += ' Saved interface "'+(saved.label||'unknown')+'" wasn\'t found \u2014 add it manually.';
+      }
+    }
+
+    for(const t of [...Engine.tracks]) Engine.removeTrack(t);
+    this._syncEmptyState();
+
+    for(const saved of (data.tracks||[])){
+      const t = Engine.addTrack();
+      this.els.strips.appendChild(t.el);
+      t.name = saved.name || t.name;
+      t.nameInput.value = t.name;
+      t.populateChannelOptions();
+      const resolvedDeviceId = saved.inputDeviceId!=null ? (deviceIdMap[saved.inputDeviceId] || saved.inputDeviceId) : null;
+      if(resolvedDeviceId && Engine.interfaces.has(resolvedDeviceId) && saved.inputChannel!=null){
+        t.inSelect.value = resolvedDeviceId+'::'+saved.inputChannel;
+        t.setInputSource(resolvedDeviceId, saved.inputChannel);
+      }
+      t.knobControls.trim.setValue(saved.trimDb||0);
+      t.knobControls.pan.setValue(saved.pan||0);
+      t.knobControls.low.setValue((saved.eq&&saved.eq.low)||0);
+      t.knobControls.mid.setValue((saved.eq&&saved.eq.mid)||0);
+      t.knobControls.high.setValue((saved.eq&&saved.eq.high)||0);
+      t.faderControl.setValue(saved.faderDb||0);
+      t.setMuted(!!saved.muted);
+      t.setSolo(!!saved.solo);
+      t.setArmed(!!saved.armed);
+      if(saved.fx){
+        if(saved.fx.gate){
+          t.setGateThreshold(saved.fx.gate.thresholdDb ?? -40);
+          t.setGateEnabled(!!saved.fx.gate.enabled);
+        }
+        if(saved.fx.comp){
+          t.setCompParam('thresholdDb', saved.fx.comp.thresholdDb ?? -20);
+          t.setCompParam('ratio', saved.fx.comp.ratio ?? 4);
+          t.setCompParam('attack', saved.fx.comp.attack ?? 0.01);
+          t.setCompParam('release', saved.fx.comp.release ?? 0.25);
+          t.setCompEnabled(!!saved.fx.comp.enabled);
+        }
+        if(saved.fx.delay){
+          t.setDelayParam('timeMs', saved.fx.delay.timeMs ?? 300);
+          t.setDelayParam('feedback', saved.fx.delay.feedback ?? 0.3);
+          t.setDelayParam('mix', saved.fx.delay.mix ?? 0.35);
+          t.setDelayEnabled(!!saved.fx.delay.enabled);
+        }
+      }
+    }
+    this._syncEmptyState();
+
+    if(data.master && this.masterFaderControl) this.masterFaderControl.setValue(data.master.faderDb||0);
+
+    alert('Project loaded.'+ifaceMsg);
+  },
+
+  _buildMasterStrip(){
+    const el = this.els.masterStrip;
+    el.innerHTML = `
+      <div class="strip__head"><input class="strip__name" value="Master" readonly></div>
+      <div class="strip__fader" style="padding-top:16px;">
+        <div class="fader-readout">0.0</div>
+        <div class="fader-track">
+          <div class="fader-unity"></div>
+          <div class="fader-cap"></div>
+        </div>
+      </div>
+      <div class="strip__meter-row">
+        <div style="flex:1; display:flex; flex-direction:column; align-items:center;">
+          <div class="meter-clip"></div>
+          <div class="meter" style="flex:1; align-self:stretch;"><div class="meter__mask"></div></div>
+        </div>
+      </div>
+      <div style="padding:8px; font-size:10px; color:var(--text-faint); text-align:center;">Limiter -1dB</div>
+    `;
+    this.masterFaderCap = el.querySelector('.fader-cap');
+    this.masterFaderTrack = el.querySelector('.fader-track');
+    this.masterFaderReadout = el.querySelector('.fader-readout');
+    this.masterMeterMask = el.querySelector('.meter__mask');
+    this.masterClipLight = el.querySelector('.meter-clip');
+
+    this.masterFaderState = {
+      faderCap:this.masterFaderCap, faderTrack:this.masterFaderTrack, faderReadout:this.masterFaderReadout,
+      faderDb:0, setFaderDb:(db)=>{ rampGain(Engine.masterGain.gain, dbToGain(db), Engine.ctx); }
+    };
+    this.masterFaderControl = this.wireFader(this.masterFaderState);
+  },
+
+  /* ---- FX panel ---- */
+  openFxPanel(track){
+    const body = this.els.fxBody;
+    body.innerHTML = '';
+    body.appendChild(this._buildFxModule('Gate', track.fx.gate.enabled, v=>track.setGateEnabled(v), [
+      { label:'Threshold', min:-60, max:0, step:1, value:track.fx.gate.thresholdDb, unit:'dB', onInput:v=>track.setGateThreshold(v) }
+    ]));
+    body.appendChild(this._buildFxModule('Compressor', track.fx.comp.enabled, v=>track.setCompEnabled(v), [
+      { label:'Threshold', min:-40, max:0, step:1, value:track.fx.comp.thresholdDb, unit:'dB', onInput:v=>track.setCompParam('thresholdDb',v) },
+      { label:'Ratio', min:1, max:20, step:0.5, value:track.fx.comp.ratio, unit:':1', onInput:v=>track.setCompParam('ratio',v) },
+      { label:'Attack', min:1, max:100, step:1, value:Math.round(track.fx.comp.attack*1000), unit:'ms', onInput:v=>track.setCompParam('attack',v/1000) },
+      { label:'Release', min:10, max:1000, step:10, value:Math.round(track.fx.comp.release*1000), unit:'ms', onInput:v=>track.setCompParam('release',v/1000) }
+    ]));
+    body.appendChild(this._buildFxModule('Delay', track.fx.delay.enabled, v=>track.setDelayEnabled(v), [
+      { label:'Time', min:20, max:1000, step:10, value:track.fx.delay.timeMs, unit:'ms', onInput:v=>track.setDelayParam('timeMs',v) },
+      { label:'Feedback', min:0, max:0.85, step:0.01, value:track.fx.delay.feedback, unit:'', onInput:v=>track.setDelayParam('feedback',v) },
+      { label:'Mix', min:0, max:0.8, step:0.01, value:track.fx.delay.mix, unit:'', onInput:v=>track.setDelayParam('mix',v) }
+    ]));
+    const eqNote = document.createElement('div');
+    eqNote.style.cssText = 'margin-top:14px; font-size:11px; color:var(--text-faint);';
+    eqNote.textContent = 'EQ is always on \u2014 adjust it with the Low/Mid/High knobs on the strip itself.';
+    body.appendChild(eqNote);
+
+    this.els.fxTitle.textContent = track.name + ' \u2014 Effects';
+    this.els.fxOverlay.classList.add('open');
+  },
+
+  _buildFxModule(name, enabled, onToggle, params){
+    const mod = document.createElement('div');
+    mod.className = 'fx-module';
+    const head = document.createElement('div');
+    head.className = 'fx-module__head';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'fx-module__name';
+    nameEl.textContent = name;
+    const toggle = document.createElement('div');
+    toggle.className = 'fx-toggle' + (enabled ? ' on' : '');
+    toggle.onclick = ()=>{
+      const v = !toggle.classList.contains('on');
+      toggle.classList.toggle('on', v);
+      onToggle(v);
+    };
+    head.appendChild(nameEl); head.appendChild(toggle);
+    mod.appendChild(head);
+
+    const paramsWrap = document.createElement('div');
+    paramsWrap.className = 'fx-params';
+    for(const p of params){
+      const wrap = document.createElement('div');
+      wrap.className = 'fx-param';
+      const label = document.createElement('label'); label.textContent = p.label;
+      const input = document.createElement('input');
+      input.type = 'range'; input.min = p.min; input.max = p.max; input.step = p.step; input.value = p.value;
+      const val = document.createElement('div'); val.className = 'fx-param-val';
+      val.textContent = p.value + (p.unit || '');
+      input.oninput = (e)=>{
+        const v = parseFloat(e.target.value);
+        val.textContent = (Math.round(v*100)/100) + (p.unit || '');
+        p.onInput(v);
+      };
+      wrap.appendChild(label); wrap.appendChild(input); wrap.appendChild(val);
+      paramsWrap.appendChild(wrap);
+    }
+    mod.appendChild(paramsWrap);
+    return mod;
+  },
+
+  /* ---- Clip editor ---- */
+  async openClipEditor(recording){
+    if(!recording.decodedBuffer){
+      let arrBuf;
+      try{ arrBuf = await recording.blob.arrayBuffer(); }
+      catch(e){ alert('Could not read this recording.'); return; }
+      try{ recording.decodedBuffer = await Engine.ctx.decodeAudioData(arrBuf); }
+      catch(e){ alert('Could not decode this recording for editing.'); return; }
+    }
+    const buf = recording.decodedBuffer;
+    const numBuckets = this.els.editCanvas.width;
+    const perChannelPeaks = [];
+    for(let ch=0; ch<buf.numberOfChannels; ch++) perChannelPeaks.push(computePeaks(buf.getChannelData(ch), numBuckets));
+    const mono = new Array(numBuckets);
+    for(let i=0;i<numBuckets;i++){
+      let mn=0, mx=0;
+      for(const chPeaks of perChannelPeaks){ if(chPeaks[i].min<mn) mn=chPeaks[i].min; if(chPeaks[i].max>mx) mx=chPeaks[i].max; }
+      mono[i] = {min:mn, max:mx};
+    }
+    this._editMonoPeaks = mono;
+    this._editState = { recording, trimStart:0, trimEnd:1, fadeIn:0, fadeOut:0, markers:[] };
+
+    this.els.editFadeIn.value = 0; this.els.editFadeInVal.textContent = '0ms';
+    this.els.editFadeOut.value = 0; this.els.editFadeOutVal.textContent = '0ms';
+    this.els.editTitle.textContent = recording.name + ' \u2014 Edit';
+    this._redrawEdit();
+    this._updateEditHandles();
+    this._renderMarkersList();
+    this.els.editOverlay.classList.add('open');
+  },
+
+  _wireEditHandles(){
+    const wrap = this.els.editWaveWrap;
+    const makeDrag = (handleEl, which)=>{
+      handleEl.addEventListener('pointerdown', (e)=>{
+        if(!this._editState) return;
+        handleEl.setPointerCapture(e.pointerId);
+        const move = (ev)=>{
+          const rect = wrap.getBoundingClientRect();
+          const frac = clamp((ev.clientX-rect.left)/rect.width, 0, 1);
+          const st = this._editState;
+          if(which==='start') st.trimStart = Math.min(frac, st.trimEnd-0.01);
+          else st.trimEnd = Math.max(frac, st.trimStart+0.01);
+          this._redrawEdit(); this._updateEditHandles();
+        };
+        const up = ()=>{
+          handleEl.removeEventListener('pointermove', move);
+          handleEl.removeEventListener('pointerup', up);
+        };
+        handleEl.addEventListener('pointermove', move);
+        handleEl.addEventListener('pointerup', up);
+      });
+    };
+    makeDrag(this.els.editHandleStart, 'start');
+    makeDrag(this.els.editHandleEnd, 'end');
+
+    this.els.editCanvas.addEventListener('click', (e)=>{
+      if(!this._editState) return;
+      const rect = wrap.getBoundingClientRect();
+      const frac = clamp((e.clientX-rect.left)/rect.width, 0, 1);
+      const st = this._editState;
+      if(frac>st.trimStart && frac<st.trimEnd){
+        st.markers.push(frac);
+        st.markers.sort((a,b)=>a-b);
+        this._redrawEdit();
+        this._renderMarkersList();
+      }
+    });
+  },
+
+  _wireEditControls(){
+    this.els.editFadeIn.oninput = (e)=>{
+      const ms = parseFloat(e.target.value);
+      this.els.editFadeInVal.textContent = ms+'ms';
+      if(this._editState) this._editState.fadeIn = ms/1000;
+    };
+    this.els.editFadeOut.oninput = (e)=>{
+      const ms = parseFloat(e.target.value);
+      this.els.editFadeOutVal.textContent = ms+'ms';
+      if(this._editState) this._editState.fadeOut = ms/1000;
+    };
+    this.els.editClearMarkersBtn.onclick = ()=>{
+      if(!this._editState) return;
+      this._editState.markers = [];
+      this._redrawEdit();
+      this._renderMarkersList();
+    };
+    this.els.editPreviewBtn.onclick = ()=> this._previewEdit();
+    this.els.editExportBtn.onclick = ()=> this._exportEdit();
+  },
+
+  _redrawEdit(){
+    if(!this._editState) return;
+    const st = this._editState;
+    drawWaveform(this.els.editCanvas, this._editMonoPeaks, st.trimStart, st.trimEnd, st.markers);
+  },
+
+  _updateEditHandles(){
+    if(!this._editState) return;
+    this.els.editHandleStart.style.left = (this._editState.trimStart*100)+'%';
+    this.els.editHandleEnd.style.left = (this._editState.trimEnd*100)+'%';
+  },
+
+  _renderMarkersList(){
+    const st = this._editState;
+    const list = this.els.editMarkersList;
+    list.innerHTML = '';
+    if(!st) return;
+    const dur = st.recording.decodedBuffer.duration;
+    st.markers.forEach((f,i)=>{
+      const row = document.createElement('div');
+      row.className = 'edit-marker-row';
+      row.innerHTML = `<span>Split ${i+1} \u2014 ${(f*dur).toFixed(2)}s</span>`;
+      const del = document.createElement('button');
+      del.textContent = 'Remove';
+      del.onclick = ()=>{ st.markers.splice(i,1); this._redrawEdit(); this._renderMarkersList(); };
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  },
+
+  _previewEdit(){
+    if(this._previewSource){ this._stopPreview(); return; }
+    const st = this._editState;
+    if(!st) return;
+    const buf = st.recording.decodedBuffer;
+    const sr = buf.sampleRate;
+    const total = buf.length;
+    const startSample = Math.floor(st.trimStart*total);
+    const endSample = Math.floor(st.trimEnd*total);
+    const segLen = Math.max(1, endSample-startSample);
+    const previewBuf = Engine.ctx.createBuffer(buf.numberOfChannels, segLen, sr);
+    for(let ch=0; ch<buf.numberOfChannels; ch++){
+      previewBuf.copyToChannel(buf.getChannelData(ch).slice(startSample,endSample), ch);
+    }
+    const src = Engine.ctx.createBufferSource();
+    src.buffer = previewBuf;
+    const g = Engine.ctx.createGain();
+    const now = Engine.ctx.currentTime;
+    const dur = previewBuf.duration;
+    const fadeIn = Math.min(Math.max(st.fadeIn, 0.005), dur/2);
+    const fadeOut = Math.min(Math.max(st.fadeOut, 0.005), dur/2);
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(1, now+fadeIn);
+    g.gain.setValueAtTime(1, now+Math.max(fadeIn, dur-fadeOut));
+    g.gain.linearRampToValueAtTime(0, now+dur);
+    src.connect(g); g.connect(Engine.masterGain);
+    src.onended = ()=>{
+      if(this._previewSource===src){ this._previewSource=null; this.els.editPreviewBtn.textContent='\u25b6 Preview'; }
+    };
+    src.start();
+    this._previewSource = src;
+    this.els.editPreviewBtn.textContent = '\u25a0 Stop';
+  },
+
+  _stopPreview(){
+    if(this._previewSource){
+      try{ this._previewSource.onended=null; this._previewSource.stop(); }catch(e){}
+      this._previewSource = null;
+    }
+    this.els.editPreviewBtn.textContent = '\u25b6 Preview';
+  },
+
+  _exportEdit(){
+    const st = this._editState;
+    if(!st) return;
+    const buf = st.recording.decodedBuffer;
+    const sr = buf.sampleRate;
+    const total = buf.length;
+    const fullChannels = [];
+    for(let ch=0; ch<buf.numberOfChannels; ch++) fullChannels.push(buf.getChannelData(ch));
+
+    const trimStartSample = Math.floor(st.trimStart*total);
+    const trimEndSample = Math.floor(st.trimEnd*total);
+    const markerSamples = st.markers
+      .map(f=>Math.floor(f*total))
+      .filter(s=>s>trimStartSample && s<trimEndSample)
+      .sort((a,b)=>a-b);
+    const cutPoints = [trimStartSample, ...markerSamples, trimEndSample];
+
+    const antiClick = 0.005;
+    const results = [];
+    for(let i=0;i<cutPoints.length-1;i++){
+      const segStart=cutPoints[i], segEnd=cutPoints[i+1];
+      const segChannels = fullChannels.map(ch=>ch.slice(segStart,segEnd));
+      const isFirst = i===0, isLast = i===cutPoints.length-2;
+      const fadeInSec = isFirst ? Math.max(st.fadeIn, antiClick) : antiClick;
+      const fadeOutSec = isLast ? Math.max(st.fadeOut, antiClick) : antiClick;
+      applyFadesToBuffer(segChannels, sr, fadeInSec, fadeOutSec);
+      const blob = encodeWAV(segChannels, sr);
+      const suffix = cutPoints.length>2 ? ' (part '+(i+1)+')' : ' (edited)';
+      results.push({ name: st.recording.name+suffix, blob, url:URL.createObjectURL(blob), frames: segChannels[0].length });
+    }
+    this.onRecordingsReady(results);
+    this._stopPreview();
+    this.els.editOverlay.classList.remove('open');
+  },
+
+  /* ---- Editing Board: multi-select batch trim/fade across tracks from the same session ---- */
+  openBoard(){
+    this._renderBoard();
+    this.els.boardOverlay.classList.add('open');
+  },
+
+  _wireBoardControls(){
+    this.els.boardTrimStart.oninput = (e)=>{ this.els.boardTrimStartVal.textContent = e.target.value+'%'; };
+    this.els.boardTrimEnd.oninput = (e)=>{ this.els.boardTrimEndVal.textContent = e.target.value+'%'; };
+    this.els.boardFadeIn.oninput = (e)=>{ this.els.boardFadeInVal.textContent = e.target.value+'ms'; };
+    this.els.boardFadeOut.oninput = (e)=>{ this.els.boardFadeOutVal.textContent = e.target.value+'ms'; };
+    this.els.boardExportBtn.onclick = ()=> this._exportBoardSelection();
+    this.els.boardClose.onclick = ()=> this.els.boardOverlay.classList.remove('open');
+    this.els.boardOverlay.onclick = (e)=>{ if(e.target===this.els.boardOverlay) this.els.boardOverlay.classList.remove('open'); };
+  },
+
+  _renderBoard(){
+    const wrap = this.els.boardSessions;
+    wrap.innerHTML = '';
+    this._boardSelection = new Set();
+    this._boardLastClickedIndex = null;
+    this._updateBoardSelectionCount();
+
+    if(this._recordings.length===0){
+      wrap.innerHTML = '<div class="board-empty">No recordings yet \u2014 record something first, then come back here to batch-edit.</div>';
+      return;
+    }
+
+    const sessions = new Map();
+    for(const r of this._recordings){
+      if(!sessions.has(r.sessionId)) sessions.set(r.sessionId, []);
+      sessions.get(r.sessionId).push(r);
+    }
+    this._boardFlatList = [];
+    let flatIndex = 0;
+    for(const [sessionId, recs] of sessions){
+      const sessionEl = document.createElement('div');
+      sessionEl.className = 'board-session';
+      const header = document.createElement('div');
+      header.className = 'board-session__head';
+      header.textContent = 'Session ' + sessionId + ' \u2014 ' + recs.length + ' track' + (recs.length>1?'s':'');
+      sessionEl.appendChild(header);
+      for(const r of recs){
+        const idx = flatIndex;
+        this._boardFlatList.push(r);
+        sessionEl.appendChild(this._buildBoardRow(r, idx));
+        flatIndex++;
+      }
+      wrap.appendChild(sessionEl);
+    }
+  },
+
+  _buildBoardRow(r, flatIndex){
+    const row = document.createElement('div');
+    row.className = 'board-row';
+    const label = document.createElement('div');
+    label.className = 'board-row__label';
+    label.textContent = r.name;
+    const canvas = document.createElement('canvas');
+    canvas.width = 400; canvas.height = 36;
+    canvas.className = 'board-row__wave';
+    row.appendChild(label);
+    row.appendChild(canvas);
+
+    (async ()=>{
+      if(!r.decodedBuffer){
+        try{
+          const arrBuf = await r.blob.arrayBuffer();
+          r.decodedBuffer = await Engine.ctx.decodeAudioData(arrBuf);
+        }catch(e){ return; }
+      }
+      const peaks = computePeaks(r.decodedBuffer.getChannelData(0), canvas.width);
+      drawWaveform(canvas, peaks, 0, 1, []);
+    })();
+
+    row.onclick = (e)=> this._handleBoardRowClick(r, flatIndex, e);
+    return row;
+  },
+
+  _handleBoardRowClick(r, flatIndex, e){
+    if(e.shiftKey && this._boardLastClickedIndex!=null){
+      const lo = Math.min(this._boardLastClickedIndex, flatIndex);
+      const hi = Math.max(this._boardLastClickedIndex, flatIndex);
+      for(let i=lo;i<=hi;i++) this._boardSelection.add(this._boardFlatList[i]);
+    }else if(e.ctrlKey || e.metaKey){
+      if(this._boardSelection.has(r)) this._boardSelection.delete(r);
+      else this._boardSelection.add(r);
+    }else{
+      this._boardSelection = new Set([r]);
+    }
+    this._boardLastClickedIndex = flatIndex;
+    this._syncBoardRowStyles();
+    this._updateBoardSelectionCount();
+  },
+
+  _syncBoardRowStyles(){
+    const rows = this.els.boardSessions.querySelectorAll('.board-row');
+    rows.forEach((rowEl, i)=>{
+      rowEl.classList.toggle('selected', this._boardSelection.has(this._boardFlatList[i]));
+    });
+  },
+
+  _updateBoardSelectionCount(){
+    this.els.boardSelCount.textContent = this._boardSelection.size + ' selected';
+  },
+
+  async _exportBoardSelection(){
+    if(this._boardSelection.size===0){ alert('Click a track row to select it first \u2014 ctrl/cmd-click or shift-click to select more than one.'); return; }
+    const trimStartFrac = parseFloat(this.els.boardTrimStart.value)/100;
+    const trimEndFrac = parseFloat(this.els.boardTrimEnd.value)/100;
+    if(trimEndFrac<=trimStartFrac){ alert('Trim end must be after trim start.'); return; }
+    const fadeIn = parseFloat(this.els.boardFadeIn.value)/1000;
+    const fadeOut = parseFloat(this.els.boardFadeOut.value)/1000;
+    const results = [];
+    for(const r of this._boardSelection){
+      if(!r.decodedBuffer){
+        try{
+          const arrBuf = await r.blob.arrayBuffer();
+          r.decodedBuffer = await Engine.ctx.decodeAudioData(arrBuf);
+        }catch(e){ continue; }
+      }
+      const buf = r.decodedBuffer;
+      const sr = buf.sampleRate;
+      const total = buf.length;
+      const startSample = Math.floor(trimStartFrac*total);
+      const endSample = Math.floor(trimEndFrac*total);
+      const channels = [];
+      for(let ch=0; ch<buf.numberOfChannels; ch++) channels.push(buf.getChannelData(ch).slice(startSample,endSample));
+      applyFadesToBuffer(channels, sr, Math.max(fadeIn,0.005), Math.max(fadeOut,0.005));
+      const blob = encodeWAV(channels, sr);
+      results.push({ name: r.name+' (batch edit)', blob, url:URL.createObjectURL(blob), frames: channels[0].length, sessionId: ++Engine.sessionSeq });
+    }
+    this.onRecordingsReady(results);
+    alert('Exported '+results.length+' file(s) \u2014 check the Recordings panel.');
+  },
+
+
+  wireKnob(el, min, max, def, onChange, formatFn){
+    const dial = el.querySelector('.knob__dial');
+    const valEl = el.querySelector('.knob__val');
+    let value = def;
+    const apply = (skipCb)=>{
+      const t = (value-min)/(max-min);
+      dial.style.setProperty('--rot', (-135 + t*270)+'deg');
+      valEl.textContent = formatFn(value);
+      if(!skipCb) onChange(value);
+    };
+    apply(true);
+    let dragStart=null, valueStart=null;
+    const onMove = (clientY)=>{
+      const dy = dragStart - clientY;
+      const range = max-min;
+      const delta = (dy/140)*range;
+      value = clamp(valueStart + delta, min, max);
+      apply();
+    };
+    el.addEventListener('pointerdown', (e)=>{
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      dragStart = e.clientY; valueStart = value;
+    });
+    el.addEventListener('pointermove', (e)=>{ if(dragStart!==null) onMove(e.clientY); });
+    el.addEventListener('pointerup', (e)=>{ dragStart=null; try{el.releasePointerCapture(e.pointerId);}catch(err){} });
+    el.addEventListener('pointercancel', ()=>{ dragStart=null; });
+    el.addEventListener('dblclick', ()=>{ value=def; apply(); });
+    el.addEventListener('wheel', (e)=>{
+      e.preventDefault();
+      const range=max-min;
+      value = clamp(value - Math.sign(e.deltaY)*range*0.02, min, max);
+      apply();
+    }, {passive:false});
+
+    return { setValue(v){ value = clamp(v,min,max); apply(); } };
+  },
+
+  wireFader(target){
+    const cap = target.faderCap, track = target.faderTrack, readout = target.faderReadout;
+    const apply = (db, skipCb)=>{
+      const pos = dbToPos(db);
+      cap.style.bottom = (pos*100)+'%';
+      readout.textContent = formatDb(db);
+      if(!skipCb && target.setFaderDb) target.setFaderDb(db);
+    };
+    apply(target.faderDb!==undefined?target.faderDb:0, true);
+    let dragging=false, startY=0, startDb=0;
+    const start = (e)=>{
+      dragging=true; startY=e.clientY; startDb = target.faderDb!==undefined?target.faderDb:0;
+      track.setPointerCapture(e.pointerId);
+    };
+    const move = (e)=>{
+      if(!dragging) return;
+      const rect = track.getBoundingClientRect();
+      const dy = startY - e.clientY;
+      const deltaPos = dy/rect.height;
+      const db = posToDb(dbToPos(startDb)+deltaPos);
+      target.faderDb = db;
+      apply(db);
+    };
+    const end = (e)=>{ dragging=false; try{track.releasePointerCapture(e.pointerId);}catch(err){} };
+    track.addEventListener('pointerdown', start);
+    track.addEventListener('pointermove', move);
+    track.addEventListener('pointerup', end);
+    track.addEventListener('pointercancel', end);
+    track.addEventListener('wheel', (e)=>{
+      e.preventDefault();
+      const db = clamp((target.faderDb||0) - Math.sign(e.deltaY)*0.8, -60, 6);
+      target.faderDb = db; apply(db);
+    }, {passive:false});
+    track.addEventListener('dblclick', ()=>{ target.faderDb=0; apply(0); });
+
+    return { setValue(db){ target.faderDb = db; apply(db); } };
+  },
+
+  /* ---- metering loop ---- */
+  _meterActive:true,
+  _buf:new Float32Array(1024),
+  _startMeterLoop(){
+    const loop = ()=>{
+      if(this._meterActive){
+        for(const t of Engine.tracks) this._drawMeter(t.nodes.analyser, t.meterMask, t.clipLight, t);
+        this._drawMeter(Engine.masterAnalyser, this.masterMeterMask, this.masterClipLight, null);
+      }
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  },
+  _drawMeter(analyser, maskEl, clipEl, trackRef){
+    if(!analyser || !maskEl) return;
+    const buf = this._buf.length===analyser.fftSize ? this._buf : (this._buf=new Float32Array(analyser.fftSize));
+    analyser.getFloatTimeDomainData(buf);
+    let peak=0;
+    for(let i=0;i<buf.length;i++){ const a=Math.abs(buf[i]); if(a>peak) peak=a; }
+    const db = 20*Math.log10(Math.max(peak,1e-6));
+    const frac = clamp((db - (-60)) / (6-(-60)), 0, 1);
+    maskEl.style.height = ((1-frac)*100)+'%';
+    const now = performance.now();
+    if(peak >= 0.98){
+      const holdUntil = now + 1500;
+      if(trackRef) trackRef._clipUntil = holdUntil; else this._masterClipUntil = holdUntil;
+    }
+    const until = trackRef ? trackRef._clipUntil : this._masterClipUntil;
+    if(clipEl) clipEl.classList.toggle('lit', !!until && now < until);
+  },
+
+  onRecordingsReady(results){
+    for(const r of results){
+      this._recordings.unshift(r);
+      const row = document.createElement('div');
+      row.className = 'rec-row';
+      const secs = (r.frames / Engine.ctx.sampleRate).toFixed(1);
+      row.innerHTML = `<div class="rec-top"><span class="name">${r.name}</span><span class="meta">${secs}s</span></div>`;
+      const audioEl = document.createElement('audio');
+      audioEl.controls = true; audioEl.preload = 'metadata'; audioEl.src = r.url;
+      row.appendChild(audioEl);
+      const a = document.createElement('a');
+      a.href = r.url; a.download = r.name.replace(/\s+/g,'_')+'.wav'; a.textContent = 'Download';
+      row.querySelector('.rec-top').appendChild(a);
+      const editA = document.createElement('a');
+      editA.href = '#'; editA.textContent = 'Edit';
+      editA.onclick = (e)=>{ e.preventDefault(); this.openClipEditor(r); };
+      row.querySelector('.rec-top').appendChild(editA);
+      this.els.recordingsList.prepend(row);
+    }
+    this.els.recCount.textContent = this._recordings.length ? '('+this._recordings.length+')' : '';
+    if(results.length) this.els.recordings.classList.add('open');
+    this.els.recordBtn.textContent = '\u25cf Record';
+    this.els.recordBtn.classList.remove('active');
+    this.els.recordBtn.disabled = false;
+  },
+
+  async toggleRecord(){
+    if(Engine.recording){
+      this.els.recordBtn.disabled = true;
+      this.els.recordBtn.textContent = 'Finishing\u2026';
+      await Engine.stopRecording();
+      return;
+    }
+    const res = await Engine.startRecording();
+    if(!res.ok){ alert(res.msg); return; }
+    this.els.recordBtn.textContent = '\u25a0 Stop';
+    this.els.recordBtn.classList.add('active');
+  }
+};
+
+UI.init();
+</script>
+</body>
+</html>
