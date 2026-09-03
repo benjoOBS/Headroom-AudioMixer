@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Headroom — Console</title>
+<style>
+  :root{
+    --bg:#17181A;
+    --panel:#212226;
+    --panel-raised:#2B2C30;
+    --panel-recessed:#141517;
+    --line:#38393E;
+    --line-soft:#2A2B2F;
+    --text:#E8E6E1;
+    --text-dim:#93949A;
+    --text-faint:#5C5D63;
+    --accent:#E0A544;
+    --accent-dim:#8A6A34;
+    --danger:#D9534F;
+    --meter-green:#5FB876;
+    --meter-yellow:#DFC24A;
+    --meter-red:#D9534F;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg); color:var(--text);
+    font-family:var(--sans);
+    -webkit-tap-highlight-color:transparent;
+    overscroll-behavior:none;
+    color-scheme:dark;
+  }
+  body{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
+  button{ font-family:inherit; }
+  select{ font-family:inherit; }
+
+  /* ---------- Power-on splash ---------- */
+  #splash{
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:18px; background:var(--bg); z-index:50;
+    text-align:center; padding:24px;
+  }
+  #splash.hidden{ display:none; }
+  #splash h1{
+    font-size:clamp(28px,7vw,40px); margin:0; font-weight:600; letter-spacing:-0.01em;
+  }
+  #splash h1 span{ color:var(--accent); }
+  #splash p{ color:var(--text-dim); max-width:38ch; margin:0; line-height:1.5; font-size:14.5px; }
+  #powerBtn{
+    width:104px; height:104px; border-radius:50%;
+    border:2px solid var(--line);
+    background:radial-gradient(circle at 35% 30%, var(--panel-raised), var(--panel-recessed));
+    color:var(--accent); font-size:13px; letter-spacing:.03em;
+    cursor:pointer; box-shadow:0 0 0 0 rgba(224,165,68,0.35);
+    transition:box-shadow .25s ease, transform .1s ease;
+  }
+  #powerBtn:hover{ box-shadow:0 0 0 8px rgba(224,165,68,0.08); }
+  #powerBtn:active{ transform:scale(0.96); }
+  #splashError{ color:var(--danger); font-size:13px; max-width:38ch; min-height:1.2em; }
+
+  /* ---------- Top bar ---------- */
+  #topbar{
+    display:flex; align-items:center; gap:14px;
+    padding:10px 14px; background:var(--panel);
+    border-bottom:1px solid var(--line); flex:0 0 auto;
+    overflow-x:auto; white-space:nowrap;
+  }
+  #topbar .brand{ font-weight:600; font-size:15px; letter-spacing:-0.01em; flex:0 0 auto; }
+  #topbar .brand span{ color:var(--accent); }
+  #topbar .status{
+    font-family:var(--mono); font-size:11.5px; color:var(--text-dim);
+    display:flex; align-items:center; gap:6px; flex:0 0 auto;
+  }
+  #topbar .status .dot{ width:7px; height:7px; border-radius:50%; background:var(--meter-green); box-shadow:0 0 6px var(--meter-green); }
+  .spacer{ flex:1 1 auto; }
+  .tb-btn{
+    flex:0 0 auto; background:var(--panel-raised); border:1px solid var(--line); color:var(--text);
+    padding:8px 13px; border-radius:6px; font-size:13px; cursor:pointer;
+    text-decoration:none; display:inline-flex; align-items:center; justify-content:center;
+  }
+  .tb-btn:hover{ border-color:var(--text-faint); }
+  .tb-btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .tb-btn.record{ color:var(--danger); border-color:var(--danger); }
+  .tb-btn.record.active{ background:var(--danger); color:#1a1010; animation:pulse 1.1s infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:.55;} }
+  .tb-select{
+    background:var(--panel-raised); border:1px solid var(--line); color:var(--text);
+    padding:7px 8px; border-radius:6px; font-size:12.5px; max-width:150px;
+  }
+  .tb-label{ font-size:11px; color:var(--text-faint); }
+  .tb-group{ display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+
+  /* ---------- Recordings panel ---------- */
+  #recordings{
+    flex:0 0 auto; background:var(--panel-recessed); border-bottom:1px solid var(--line);
+    padding:0 14px; max-height:0; overflow:hidden; transition:max-height .25s ease, padding .25s ease;
+  }
+  #recordings.open{ max-height:260px; padding:10px 14px; overflow-y:auto; }
+  #recordings h2{ font-size:11px; text-transform:none; color:var(--text-faint); margin:0 0 8px; font-weight:600; }
+  .rec-row{
+    display:flex; flex-direction:column; gap:6px; padding:8px 0; border-bottom:1px solid var(--line-soft);
+    font-size:13px;
+  }
+  .rec-row:last-child{ border-bottom:none; }
+  .rec-row .rec-top{ display:flex; align-items:center; gap:10px; }
+  .rec-row .name{ flex:1; }
+  .rec-row .meta{ color:var(--text-faint); font-family:var(--mono); font-size:11.5px; }
+  .rec-row a{
+    color:var(--accent); text-decoration:none; border:1px solid var(--accent-dim);
+    padding:5px 10px; border-radius:5px; font-size:12px;
+  }
+  .rec-row audio{ width:100%; height:32px; }
+
+  /* ---------- Console ---------- */
+  #console{
+    flex:1 1 auto; display:flex; overflow-x:auto; overflow-y:hidden;
+    padding:14px; gap:2px; scroll-snap-type:x proximity;
+    align-items:stretch;
+  }
+  #strips{ display:flex; gap:2px; }
+  #emptyState{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    color:var(--text-faint); gap:10px; padding:40px; margin:auto; text-align:center;
+  }
+  #emptyState.hidden{ display:none; }
+  #emptyState button{
+    background:var(--panel-raised); border:1px solid var(--line); color:var(--accent);
+    padding:9px 16px; border-radius:6px; font-size:13.5px; cursor:pointer;
+  }
+
+  .strip{
+    flex:0 0 118px; background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    display:flex; flex-direction:column; scroll-snap-align:start; overflow:hidden;
+  }
+  .strip.armed{ border-color:var(--danger); }
+  .strip.master{ flex:0 0 132px; background:var(--panel-raised); }
+
+  .strip__head{
+    padding:8px 8px 6px; border-bottom:1px solid var(--line-soft); position:relative;
+  }
+  .strip__name{
+    width:100%; background:transparent; border:none; color:var(--text); font-size:12.5px;
+    font-weight:600; padding:2px 0; text-align:center; font-family:var(--sans);
+  }
+  .strip__name:focus{ outline:none; border-bottom:1px solid var(--accent-dim); }
+  .strip__remove{
+    position:absolute; top:4px; right:4px; width:18px; height:18px; border-radius:4px;
+    background:transparent; border:none; color:var(--text-faint); font-size:14px; cursor:pointer; line-height:1;
+  }
+  .strip__remove:hover{ color:var(--danger); }
+
+  .strip__io{ padding:7px 8px; border-bottom:1px solid var(--line-soft); }
+  .io-select{
+    width:100%; background:var(--panel-recessed); border:1px solid var(--line); color:var(--text-dim);
+    font-size:10.5px; padding:5px 4px; border-radius:5px; margin-bottom:5px;
+  }
+  .io-select:last-child{ margin-bottom:0; }
+  .io-error{ color:var(--danger); font-size:10px; padding:2px 0 0; line-height:1.3; }
+
+  .knob-row{ display:flex; justify-content:space-around; padding:9px 4px; border-bottom:1px solid var(--line-soft); }
+  .knob{ display:flex; flex-direction:column; align-items:center; gap:3px; touch-action:none; cursor:ns-resize; user-select:none; }
+  .knob__dial{
+    width:30px; height:30px; border-radius:50%; background:var(--panel-recessed);
+    border:1px solid var(--line); position:relative;
+  }
+  .knob__dial::after{
+    content:''; position:absolute; top:3px; left:50%; width:2px; height:9px; background:var(--accent);
+    transform-origin:50% 12px; transform:translateX(-50%) rotate(var(--rot,0deg)); border-radius:1px;
+  }
+  .knob__label{ font-size:9px; color:var(--text-faint); letter-spacing:.02em; }
+  .knob__val{ font-size:9.5px; color:var(--text-dim); font-family:var(--mono); min-height:11px; }
+
+  .strip__eq{ padding:8px 4px; border-bottom:1px solid var(--line-soft); display:flex; justify-content:space-around; }
+
+  .strip__fader{
+    flex:1; display:flex; flex-direction:column; align-items:center; padding:10px 0 6px; gap:6px; min-height:150px;
+  }
+  .fader-readout{ font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+  .fader-track{
+    position:relative; width:34px; flex:1; background:var(--panel-recessed); border-radius:6px;
+    border:1px solid var(--line); touch-action:none; cursor:ns-resize;
+  }
+  .fader-unity{
+    position:absolute; left:-3px; right:-3px; top:20%; height:1px; background:var(--line-soft);
+  }
+  .fader-cap{
+    position:absolute; left:2px; right:2px; height:20px; background:linear-gradient(var(--panel-raised),var(--panel-recessed));
+    border:1px solid var(--text-faint); border-radius:4px; bottom:0; transform:translateY(50%);
+  }
+  .fader-cap::after{
+    content:''; position:absolute; left:6px; right:6px; top:50%; height:2px; background:var(--accent); transform:translateY(-50%);
+  }
+
+  .strip__meter-row{ display:flex; align-items:stretch; gap:6px; padding:0 8px 8px; }
+  .meter{
+    position:relative; width:9px; border-radius:3px; overflow:hidden;
+    background:linear-gradient(to top, var(--meter-green) 0%, var(--meter-green) 58%, var(--meter-yellow) 58%, var(--meter-yellow) 84%, var(--meter-red) 84%, var(--meter-red) 100%);
+  }
+  .meter__mask{ position:absolute; top:0; left:0; right:0; height:100%; background:var(--panel-recessed); }
+  .meter-clip{
+    width:9px; height:6px; border-radius:2px; background:var(--panel-recessed); flex:0 0 auto; margin-bottom:4px;
+  }
+  .meter-clip.lit{ background:var(--danger); box-shadow:0 0 5px var(--danger); }
+
+  .strip__bottom{
+    display:flex; gap:4px; padding:7px 8px; border-top:1px solid var(--line-soft);
+  }
+  .xs-btn{
+    flex:1; background:var(--panel-recessed); border:1px solid var(--line); color:var(--text-dim);
+    font-size:10.5px; padding:6px 0; border-radius:5px; cursor:pointer; letter-spacing:.02em;
+  }
+  .xs-btn.on-mute{ background:var(--accent); color:#1a1510; border-color:var(--accent); }
+  .xs-btn.on-solo{ background:var(--accent); color:#1a1510; border-color:var(--accent); }
+  .xs-btn.on-arm{ background:var(--danger); color:#1a1010; border-color:var(--danger); }
+
+  .strip.master .strip__eq, .strip.master .knob-row{ display:none; }
+
+  @media (max-width:480px){
+    .strip{ flex:0 0 100px; }
+    .strip.master{ flex:0 0 116px; }
+  }
+</style>
+</head>
+<body>
+
+  <div id="splash">
+    <h1>Head<span>room</span></h1>
+    <p>A light mixing &amp; recording console that runs in the browser — reads your interface (XR18 and others), mixes with EQ and dynamics, and bounces to WAV. Needs mic/audio permission to power on.</p>
+    <button id="powerBtn">POWER<br>ON</button>
+    <div id="splashError"></div>
+  </div>
+
+  <div id="topbar" style="display:none;">
+    <div class="brand">Head<span>room</span></div>
+    <div class="status"><span class="dot"></span><span id="statusText">—</span></div>
+    <div class="spacer"></div>
+    <div class="tb-group">
+      <span class="tb-label">Interface</span>
+      <select id="interfaceSelect" class="tb-select"><option value="">No interface selected</option></select>
+    </div>
+    <div class="tb-group">
+      <span class="tb-label">Out</span>
+      <select id="outputSelect" class="tb-select"><option>System default</option></select>
+    </div>
+    <button class="tb-btn" id="addTrackBtn">+ Track</button>
+    <button class="tb-btn record" id="recordBtn">● Record</button>
+    <button class="tb-btn" id="recordingsToggle">Recordings <span id="recCount"></span></button>
+    <button class="tb-btn" id="saveProjectBtn">Save project</button>
+    <button class="tb-btn" id="loadProjectBtn">Load project</button>
+    <input type="file" id="loadProjectInput" accept="application/json,.json" style="display:none;">
+    <a class="tb-btn" href="manual.html" target="_blank" rel="noopener">Manual</a>
+  </div>
+
+  <div id="recordings">
+    <h2>Recordings</h2>
+    <div id="recordingsList"></div>
+  </div>
+
+  <div id="console" style="display:none;">
+    <div id="emptyState">
+      <div>No tracks yet.</div>
+      <button id="emptyAddTrack">Add your first track</button>
+    </div>
+    <div id="strips"></div>
+    <div class="strip master" id="masterStrip"></div>
+  </div>
+
+<script>
+'use strict';
+
+/* ============================== Utilities ============================== */
+const clamp = (v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+const dbToGain = db => Math.pow(10, db/20);
+const gainToDb = g => 20*Math.log10(Math.max(g,1e-8));
+const formatDb = db => db<=-59.5 ? '-\u221e' : (db>=0?'+':'')+db.toFixed(1);
+
+function rampGain(param, value, ctx, t=0.012){
+  const now = ctx.currentTime;
+  param.cancelScheduledValues(now);
+  param.setTargetAtTime(value, now, t);
+}
+
+// Fader taper: 0..1 position -> dB. More resolution near unity, matches a real console's law.
+function posToDb(pos){
+  pos = clamp(pos,0,1);
+  if(pos <= 0.8) return -60 + (pos/0.8)*60;      // -60..0 over bottom 80% of travel
+  return ((pos-0.8)/0.2)*6;                       // 0..+6 over top 20%
+}
+function dbToPos(db){
+  db = clamp(db,-60,6);
+  if(db <= 0) return ((db+60)/60)*0.8;
+  return 0.8 + (db/6)*0.2;
+}
+
+/* ============================== WAV encoding ============================== */
+function encodeWAV(channels, sampleRate){
+  const numChannels = channels.length;
+  const numFrames = channels[0] ? channels[0].length : 0;
+  const bytesPerSample = 2;
+  const blockAlign = numChannels*bytesPerSample;
+  const dataSize = numFrames*blockAlign;
+  const buffer = new ArrayBuffer(44+dataSize);
+  const view = new DataView(buffer);
+  const writeStr = (o,s)=>{ for(let i=0;i<s.length;i++) view.setUint8(o+i,s.charCodeAt(i)); };
+  writeStr(0,'RIFF'); view.setUint32(4,36+dataSize,true); writeStr(8,'WAVE');
+  writeStr(12,'fmt '); view.setUint32(16,16,true); view.setUint16(20,1,true);
+  view.setUint16(22,numChannels,true); view.setUint32(24,sampleRate,true);
+  view.setUint32(28,sampleRate*blockAlign,true); view.setUint16(32,blockAlign,true);
+  view.setUint16(34,16,true); writeStr(36,'data'); view.setUint32(40,dataSize,true);
+  let offset=44;
+  for(let i=0;i<numFrames;i++){
+    for(let ch=0;ch<numChannels;ch++){
+      let s = channels[ch][i] || 0;
+      s = clamp(s,-1,1);
+      view.setInt16(offset, s<0 ? s*0x8000 : s*0x7FFF, true);
+      offset+=2;
+    }
+  }
+  return new Blob([buffer], {type:'audio/wav'});
+}
+
+/* ===================== Recorder AudioWorkletProcessor ===================== */
+const RECORDER_SRC = `
+class RecorderProcessor extends AudioWorkletProcessor {
+  constructor(){
+    super();
+    this._recording = false;
+    this._flushSize = 128*32;
+    this._buffers = null;
+    this._idx = 0;
+    this.port.onmessage = (e) => {
+      const d = e.data;
+      if (d.cmd === 'start') {
+        this._recording = true;
+        this._buffers = new Array(d.channelCount || 2).fill(0).map(()=> new Float32Array(this._flushSize));
+        this._idx = 0;
+      } else if (d.cmd === 'stop') {
+        this._recording = false;
+        this._flush();
+        this.port.postMessage({ type:'stopped' });
+      }
+    };
+  }
+  _flush(){
+    if(!this._buffers || this._idx === 0) return;
+    const out = this._buffers.map(b => b.slice(0, this._idx));
+    this.port.postMessage({ type:'chunk', channels: out }, out.map(a => a.buffer));
+    this._idx = 0;
+  }
+  process(inputs){
+    if(!this._recording) return true;
+    const input = inputs[0];
+    if(!input || input.length === 0) return true;
+    const frames = input[0].length;
+    for(let f=0; f<frames; f++){
+      for(let ch=0; ch<this._buffers.length; ch++){
+        const src = input[ch] || input[0];
+        this._buffers[ch][this._idx] = src[f];
+      }
+      this._idx++;
+      if(this._idx >= this._flushSize) this._flush();
+    }
+    return true;
+  }
+}
+registerProcessor('recorder-processor', RecorderProcessor);
+`;
+
+/* ============================== Audio Engine ============================== */
+const Engine = {
+  ctx: null,
+  masterGain: null,
+  masterLimiter: null,
+  masterAnalyser: null,
+  silentSink: null,
+  inputDevices: [],
+  outputDevices: [],
+  interface: null, // { deviceId, stream, sourceNode, splitterNode, channelCount, label }
+  tracks: [],
+  trackSeq: 0,
+  recording: false,
+  activeRecorders: [], // {node, kind, name, channelCount}
+  finishedChunks: null, // Map key -> array of {channels:[Float32Array...]}
+
+  async powerOn(){
+    this.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint:'interactive' });
+    if(this.ctx.state === 'suspended'){ try{ await this.ctx.resume(); }catch(e){} }
+
+    // Unlock device labels
+    let unlockStream = null;
+    try{
+      unlockStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+    }catch(e){
+      throw new Error('Microphone / audio permission was not granted. Headroom needs it to list and use your input devices.');
+    }
+    if(unlockStream) unlockStream.getTracks().forEach(t=>t.stop());
+
+    await this.refreshDevices();
+
+    // Recorder worklet
+    const blob = new Blob([RECORDER_SRC], {type:'application/javascript'});
+    const url = URL.createObjectURL(blob);
+    try{
+      await this.ctx.audioWorklet.addModule(url);
+    }catch(e){
+      throw new Error("Couldn't load the audio engine module. This almost always means the page was opened directly as a local file (file://) \u2014 browsers block worklets there. Host it (e.g. GitHub Pages) or serve it locally (e.g. `python3 -m http.server`) and open it over http(s) instead.");
+    }
+
+    // Master bus: sum -> limiter -> analyser -> destination
+    this.masterGain = this.ctx.createGain();
+    this.masterGain.gain.value = 1;
+
+    this.masterLimiter = this.ctx.createDynamicsCompressor();
+    this.masterLimiter.threshold.value = -1;
+    this.masterLimiter.knee.value = 0;
+    this.masterLimiter.ratio.value = 20;
+    this.masterLimiter.attack.value = 0.003;
+    this.masterLimiter.release.value = 0.25;
+
+    this.masterAnalyser = this.ctx.createAnalyser();
+    this.masterAnalyser.fftSize = 1024;
+
+    this.masterGain.connect(this.masterLimiter);
+    this.masterLimiter.connect(this.masterAnalyser);
+    this.masterAnalyser.connect(this.ctx.destination);
+
+    // keep-alive sink for worklet recorder nodes
+    this.silentSink = this.ctx.createGain();
+    this.silentSink.gain.value = 0;
+    this.silentSink.connect(this.ctx.destination);
+  },
+
+  async refreshDevices(){
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    this.inputDevices = devices.filter(d=>d.kind==='audioinput');
+    this.outputDevices = devices.filter(d=>d.kind==='audiooutput');
+  },
+
+  supportsSinkSelect(){
+    return typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype;
+  },
+
+  async setOutputDevice(deviceId){
+    if(!this.supportsSinkSelect()) return false;
+    try{ await this.ctx.setSinkId(deviceId); return true; }
+    catch(e){ console.warn('setSinkId failed', e); return false; }
+  },
+
+  // A single active multichannel interface, split into individual mono channels so
+  // several tracks can each listen to a different input of the same device (e.g. XR18).
+  async setInterfaceDevice(deviceId){
+    if(this.recording){
+      return { ok:false, msg:'Stop recording before switching interfaces.' };
+    }
+    if(this.interface){
+      try{ this.interface.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+      try{ this.interface.sourceNode.disconnect(); }catch(e){}
+      try{ this.interface.splitterNode.disconnect(); }catch(e){}
+      this.interface = null;
+    }
+    if(!deviceId){ UI.onInterfaceChanged(); return { ok:true }; }
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio:{
+          deviceId:{ exact: deviceId },
+          echoCancellation:false, noiseSuppression:false, autoGainControl:false,
+          channelCount:{ ideal:18, max:32 }
+        }
+      });
+      const audioTrack = stream.getAudioTracks()[0];
+      const settings = audioTrack.getSettings ? audioTrack.getSettings() : {};
+      const channelCount = clamp(settings.channelCount || 2, 1, 32);
+      const sourceNode = this.ctx.createMediaStreamSource(stream);
+      const splitterNode = this.ctx.createChannelSplitter(channelCount);
+      sourceNode.connect(splitterNode);
+      this.interface = { deviceId, stream, sourceNode, splitterNode, channelCount, label: audioTrack.label || 'Input device' };
+      UI.onInterfaceChanged();
+      return { ok:true, channelCount };
+    }catch(e){
+      UI.onInterfaceChanged();
+      return { ok:false, msg:"Couldn't open that device \u2014 check permissions, or that nothing else has it open." };
+    }
+  },
+
+  addTrack(){
+    const id = 'trk'+(++this.trackSeq);
+    const track = new Track(id, this);
+    this.tracks.push(track);
+    this.updateMuteSoloStates();
+    return track;
+  },
+
+  removeTrack(track){
+    track.dispose();
+    this.tracks = this.tracks.filter(t=>t!==track);
+    this.updateMuteSoloStates();
+  },
+
+  updateMuteSoloStates(){
+    const anySolo = this.tracks.some(t=>t.solo);
+    for(const t of this.tracks){
+      const audible = anySolo ? t.solo : !t.muted;
+      rampGain(t.nodes.muteGain.gain, audible?1:0, this.ctx);
+    }
+  },
+
+  async startRecording(){
+    const armed = this.tracks.filter(t=>t.armed && t.hasInput);
+    if(armed.length===0){
+      return { ok:false, msg:'Arm at least one track (with an input selected) before recording.' };
+    }
+    this.finishedChunks = new Map();
+    this.activeRecorders = [];
+
+    const makeRecorder = (sourceNode, channelCount, key, name) => {
+      const node = new AudioWorkletNode(this.ctx, 'recorder-processor', {
+        numberOfInputs:1, numberOfOutputs:1, channelCount, channelCountMode:'explicit', outputChannelCount:[channelCount]
+      });
+      const chunks = [];
+      this.finishedChunks.set(key, { channels: Array.from({length:channelCount}, ()=>[]), name });
+      node.port.onmessage = (e)=>{
+        const d = e.data;
+        if(d.type==='chunk'){
+          const rec = this.finishedChunks.get(key);
+          d.channels.forEach((arr,ch)=> rec.channels[ch].push(arr));
+        } else if(d.type==='stopped'){
+          this._recorderStopped(key);
+        }
+      };
+      sourceNode.connect(node);
+      node.connect(this.silentSink);
+      node.port.postMessage({ cmd:'start', channelCount });
+      this.activeRecorders.push({ node, key, sourceNode });
+    };
+
+    for(const t of armed){
+      makeRecorder(t.nodes.recordTap, 2, 'track:'+t.id, t.name);
+    }
+    makeRecorder(this.masterLimiter, 2, 'master', 'Master mix'); // post-limiter: what's actually heard
+
+    this.recording = true;
+    return { ok:true };
+  },
+
+  _pendingStops: 0,
+  async stopRecording(){
+    this._pendingStops = this.activeRecorders.length;
+    for(const r of this.activeRecorders){
+      r.node.port.postMessage({ cmd:'stop' });
+    }
+    this.recording = false;
+  },
+
+  _recorderStopped(key){
+    this._pendingStops--;
+    const rec = this.activeRecorders.find(r=>r.key===key);
+    if(rec){
+      try{ rec.sourceNode.disconnect(rec.node); }catch(e){}
+      try{ rec.node.disconnect(); }catch(e){}
+    }
+    if(this._pendingStops <= 0){
+      this._finalizeRecordings();
+    }
+  },
+
+  _finalizeRecordings(){
+    const results = [];
+    for(const [key, rec] of this.finishedChunks.entries()){
+      const flatChannels = rec.channels.map(chunkList=>{
+        let total = 0;
+        chunkList.forEach(c=>total+=c.length);
+        const out = new Float32Array(total);
+        let o=0;
+        chunkList.forEach(c=>{ out.set(c,o); o+=c.length; });
+        return out;
+      });
+      if(flatChannels[0] && flatChannels[0].length>0){
+        const blob = encodeWAV(flatChannels, this.ctx.sampleRate);
+        results.push({ name: rec.name, blob, url: URL.createObjectURL(blob), frames: flatChannels[0].length });
+      }
+    }
+    this.activeRecorders = [];
+    this.finishedChunks = null;
+    UI.onRecordingsReady(results);
+  }
+};
+
+/* ============================== Track ============================== */
+class Track{
+  constructor(id, engine){
+    this.id = id;
+    this.engine = engine;
+    this.name = 'Track '+id.replace('trk','');
+    this.muted = false;
+    this.solo = false;
+    this.armed = false;
+    this.hasInput = false;
+    this.inputChannel = null; // index into the active interface's split channels
+    this.faderDb = 0;
+    this.trimDb = 0;
+    this.pan = 0;
+    this.eq = { low:0, mid:0, high:0 };
+
+    const ctx = engine.ctx;
+    const n = this.nodes = {};
+    n.trim = ctx.createGain(); n.trim.gain.value = 1;
+    n.eqLow = new BiquadFilterNode(ctx, { type:'lowshelf', frequency:100, gain:0 });
+    n.eqMid = new BiquadFilterNode(ctx, { type:'peaking', frequency:1000, Q:1, gain:0 });
+    n.eqHigh = new BiquadFilterNode(ctx, { type:'highshelf', frequency:8000, gain:0 });
+    n.pan = new StereoPannerNode(ctx, { pan:0 });
+    n.recordTap = ctx.createGain(); n.recordTap.gain.value = 1; // post-EQ/pan, pre-mute/fader
+    n.muteGain = ctx.createGain(); n.muteGain.gain.value = 1;
+    n.fader = ctx.createGain(); n.fader.gain.value = 1;
+    n.analyser = ctx.createAnalyser(); n.analyser.fftSize = 1024;
+
+    n.trim.connect(n.eqLow); n.eqLow.connect(n.eqMid); n.eqMid.connect(n.eqHigh);
+    n.eqHigh.connect(n.pan);
+    n.pan.connect(n.recordTap);
+    n.recordTap.connect(n.muteGain);
+    n.muteGain.connect(n.fader);
+    n.fader.connect(n.analyser);
+    n.analyser.connect(engine.silentSink); // keeps the analyser "live" so it actually gets processed each frame
+    n.fader.connect(engine.masterGain);
+
+    this._clipUntil = 0;
+    this._buildDOM();
+  }
+
+  // idx: index of the channel on the active interface (0-based), or null for no input.
+  setInputChannel(idx){
+    this._clearError();
+    if(this._channelSource){
+      try{ this._channelSource.disconnect(this.nodes.trim); }catch(e){}
+      this._channelSource = null;
+    }
+    this.inputChannel = (idx===''||idx===null||idx===undefined) ? null : Number(idx);
+    const iface = this.engine.interface;
+    if(this.inputChannel===null || !iface || this.inputChannel>=iface.channelCount){
+      this.hasInput = false;
+      return;
+    }
+    try{
+      iface.splitterNode.connect(this.nodes.trim, this.inputChannel, 0);
+      this._channelSource = iface.splitterNode;
+      this.hasInput = true;
+    }catch(e){
+      this.hasInput = false;
+      this._showError('Could not connect to that channel.');
+    }
+  }
+
+  populateChannelOptions(){
+    const iface = this.engine.interface;
+    const cur = this.inSelect.value;
+    if(!iface){
+      this.inSelect.innerHTML = '<option value="">No interface selected</option>';
+      if(this.inputChannel !== null) this.setInputChannel(null);
+      return;
+    }
+    let opts = '<option value="">No input</option>';
+    for(let i=0;i<iface.channelCount;i++) opts += `<option value="${i}">Channel ${i+1}</option>`;
+    this.inSelect.innerHTML = opts;
+    if(cur!=='' && Number(cur) < iface.channelCount){
+      this.inSelect.value = cur;
+    }else if(this.inputChannel !== null){
+      this.setInputChannel(null);
+      this.inSelect.value = '';
+    }
+  }
+
+  setTrim(db){ this.trimDb=db; rampGain(this.nodes.trim.gain, dbToGain(db), this.engine.ctx); }
+  setPan(p){ this.pan=p; this.nodes.pan.pan.setTargetAtTime(p, this.engine.ctx.currentTime, 0.01); }
+  setEq(band, db){
+    this.eq[band]=db;
+    const map = { low:this.nodes.eqLow, mid:this.nodes.eqMid, high:this.nodes.eqHigh };
+    map[band].gain.setTargetAtTime(db, this.engine.ctx.currentTime, 0.01);
+  }
+  setFaderDb(db){ this.faderDb=db; rampGain(this.nodes.fader.gain, dbToGain(db), this.engine.ctx); }
+
+  toggleMute(){ this.setMuted(!this.muted); }
+  toggleSolo(){ this.setSolo(!this.solo); }
+  toggleArm(){ this.setArmed(!this.armed); }
+  setMuted(v){ this.muted=!!v; this.engine.updateMuteSoloStates(); this._syncButtons(); }
+  setSolo(v){ this.solo=!!v; this.engine.updateMuteSoloStates(); this._syncButtons(); }
+  setArmed(v){
+    this.armed=!!v;
+    this.el.classList.toggle('armed', this.armed);
+    this.armBtn.classList.toggle('on-arm', this.armed);
+  }
+
+  dispose(){
+    if(this._channelSource){ try{ this._channelSource.disconnect(this.nodes.trim); }catch(e){} }
+    try{ this.nodes.fader.disconnect(); }catch(e){}
+    try{ this.nodes.analyser.disconnect(); }catch(e){}
+    if(this.el) this.el.remove();
+  }
+
+  _showError(msg){ this.errEl.textContent = msg; }
+  _clearError(){ this.errEl.textContent = ''; }
+
+  _syncButtons(){
+    this.muteBtn.classList.toggle('on-mute', this.muted);
+    this.soloBtn.classList.toggle('on-solo', this.solo);
+  }
+
+  _buildDOM(){
+    const el = document.createElement('div');
+    el.className = 'strip';
+    el.innerHTML = `
+      <div class="strip__head">
+        <button class="strip__remove" title="Remove track">\u00d7</button>
+        <input class="strip__name" value="${this.name}" maxlength="16">
+      </div>
+      <div class="strip__io">
+        <select class="io-select in-select"><option value="">No input</option></select>
+        <div class="io-error"></div>
+      </div>
+      <div class="knob-row">
+        <div class="knob" data-knob="trim"><div class="knob__dial"></div><div class="knob__label">Trim</div><div class="knob__val">0.0</div></div>
+        <div class="knob" data-knob="pan"><div class="knob__dial"></div><div class="knob__label">Pan</div><div class="knob__val">C</div></div>
+      </div>
+      <div class="strip__eq">
+        <div class="knob" data-knob="low"><div class="knob__dial"></div><div class="knob__label">Low</div><div class="knob__val">0.0</div></div>
+        <div class="knob" data-knob="mid"><div class="knob__dial"></div><div class="knob__label">Mid</div><div class="knob__val">0.0</div></div>
+        <div class="knob" data-knob="high"><div class="knob__dial"></div><div class="knob__label">High</div><div class="knob__val">0.0</div></div>
+      </div>
+      <div class="strip__fader">
+        <div class="fader-readout">0.0</div>
+        <div class="fader-track">
+          <div class="fader-unity"></div>
+          <div class="fader-cap"></div>
+        </div>
+      </div>
+      <div class="strip__meter-row">
+        <div style="flex:1; display:flex; flex-direction:column; align-items:center;">
+          <div class="meter-clip"></div>
+          <div class="meter" style="flex:1; align-self:stretch;"><div class="meter__mask"></div></div>
+        </div>
+      </div>
+      <div class="strip__bottom">
+        <button class="xs-btn mute-btn">Mute</button>
+        <button class="xs-btn solo-btn">Solo</button>
+        <button class="xs-btn arm-btn">Arm</button>
+      </div>
+    `;
+    this.el = el;
+    this.inSelect = el.querySelector('.in-select');
+    this.errEl = el.querySelector('.io-error');
+    this.muteBtn = el.querySelector('.mute-btn');
+    this.soloBtn = el.querySelector('.solo-btn');
+    this.armBtn = el.querySelector('.arm-btn');
+    this.faderCap = el.querySelector('.fader-cap');
+    this.faderTrack = el.querySelector('.fader-track');
+    this.faderReadout = el.querySelector('.fader-readout');
+    this.meterMask = el.querySelector('.meter__mask');
+    this.clipLight = el.querySelector('.meter-clip');
+
+    el.querySelector('.strip__remove').onclick = ()=> UI.confirmRemoveTrack(this);
+    this.nameInput = el.querySelector('.strip__name');
+    this.nameInput.oninput = (e)=>{ this.name = e.target.value || this.name; };
+    this.inSelect.onchange = (e)=> this.setInputChannel(e.target.value);
+    this.muteBtn.onclick = ()=> this.toggleMute();
+    this.soloBtn.onclick = ()=> this.toggleSolo();
+    this.armBtn.onclick = ()=> this.toggleArm();
+
+    this.knobControls = {
+      trim: UI.wireKnob(el.querySelector('[data-knob="trim"]'), -20,20,0, v=>this.setTrim(v), v=>formatDb(v)),
+      pan: UI.wireKnob(el.querySelector('[data-knob="pan"]'), -1,1,0, v=>this.setPan(v), v=> v===0?'C':(v<0?'L'+Math.round(-v*100):'R'+Math.round(v*100))),
+      low: UI.wireKnob(el.querySelector('[data-knob="low"]'), -15,15,0, v=>this.setEq('low',v), v=>formatDb(v)),
+      mid: UI.wireKnob(el.querySelector('[data-knob="mid"]'), -15,15,0, v=>this.setEq('mid',v), v=>formatDb(v)),
+      high: UI.wireKnob(el.querySelector('[data-knob="high"]'), -15,15,0, v=>this.setEq('high',v), v=>formatDb(v))
+    };
+    this.faderControl = UI.wireFader(this);
+  }
+
+}
+
+/* ============================== UI ============================== */
+const UI = {
+  els: {},
+
+  init(){
+    this.els.splash = document.getElementById('splash');
+    this.els.splashError = document.getElementById('splashError');
+    this.els.powerBtn = document.getElementById('powerBtn');
+    this.els.topbar = document.getElementById('topbar');
+    this.els.consoleEl = document.getElementById('console');
+    this.els.strips = document.getElementById('strips');
+    this.els.masterStrip = document.getElementById('masterStrip');
+    this.els.emptyState = document.getElementById('emptyState');
+    this.els.statusText = document.getElementById('statusText');
+    this.els.addTrackBtn = document.getElementById('addTrackBtn');
+    this.els.emptyAddTrack = document.getElementById('emptyAddTrack');
+    this.els.recordBtn = document.getElementById('recordBtn');
+    this.els.interfaceSelect = document.getElementById('interfaceSelect');
+    this.els.outputSelect = document.getElementById('outputSelect');
+    this.els.recordingsToggle = document.getElementById('recordingsToggle');
+    this.els.recordings = document.getElementById('recordings');
+    this.els.recordingsList = document.getElementById('recordingsList');
+    this.els.recCount = document.getElementById('recCount');
+    this.els.saveProjectBtn = document.getElementById('saveProjectBtn');
+    this.els.loadProjectBtn = document.getElementById('loadProjectBtn');
+    this.els.loadProjectInput = document.getElementById('loadProjectInput');
+
+    this.els.powerBtn.onclick = ()=>this.powerOn();
+    this.els.addTrackBtn.onclick = ()=>this.addTrack();
+    this.els.emptyAddTrack.onclick = ()=>this.addTrack();
+    this.els.recordBtn.onclick = ()=>this.toggleRecord();
+    this.els.recordingsToggle.onclick = ()=> this.els.recordings.classList.toggle('open');
+    this.els.outputSelect.onchange = (e)=> Engine.setOutputDevice(e.target.value);
+    this.els.interfaceSelect.onchange = async (e)=>{
+      const prev = Engine.interface ? Engine.interface.deviceId : '';
+      const res = await Engine.setInterfaceDevice(e.target.value);
+      if(!res.ok){ alert(res.msg); e.target.value = prev; }
+    };
+    this.els.saveProjectBtn.onclick = ()=> this.saveProject();
+    this.els.loadProjectBtn.onclick = ()=> this.els.loadProjectInput.click();
+    this.els.loadProjectInput.onchange = (e)=>{
+      const file = e.target.files[0];
+      if(file) this.loadProjectFile(file);
+      e.target.value = '';
+    };
+
+    this._recordings = [];
+  },
+
+  async powerOn(){
+    this.els.powerBtn.disabled = true;
+    this.els.splashError.textContent = '';
+    try{
+      await Engine.powerOn();
+    }catch(e){
+      this.els.splashError.textContent = e.message || String(e);
+      this.els.powerBtn.disabled = false;
+      return;
+    }
+    this.els.splash.classList.add('hidden');
+    this.els.topbar.style.display = 'flex';
+    this.els.consoleEl.style.display = 'flex';
+    this._buildMasterStrip();
+    this._populateOutputs();
+    this._populateInterfaceOptions();
+    this._updateStatus();
+    if(Engine.inputDevices.length>0){
+      const first = Engine.inputDevices[0].deviceId;
+      this.els.interfaceSelect.value = first;
+      await Engine.setInterfaceDevice(first);
+    }
+    this.addTrack();
+    this._startMeterLoop();
+    document.addEventListener('visibilitychange', ()=>{
+      this._meterActive = document.visibilityState === 'visible';
+    });
+    navigator.mediaDevices.ondevicechange = async ()=>{
+      await Engine.refreshDevices();
+      this._populateInterfaceOptions();
+      this._populateOutputs();
+    };
+  },
+
+  _populateInterfaceOptions(){
+    const sel = this.els.interfaceSelect;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">No interface selected</option>' +
+      Engine.inputDevices.map(d=>`<option value="${d.deviceId}">${d.label || 'Input device'}</option>`).join('');
+    if(cur && Engine.inputDevices.some(d=>d.deviceId===cur)) sel.value = cur;
+  },
+
+  onInterfaceChanged(){
+    for(const t of Engine.tracks) t.populateChannelOptions();
+  },
+
+  _updateStatus(){
+    const ctx = Engine.ctx;
+    const lat = ctx.baseLatency ? Math.round(ctx.baseLatency*1000) : null;
+    this.els.statusText.textContent = ctx.sampleRate + ' Hz' + (lat!=null ? ' \u00b7 ~'+lat+'ms' : '');
+  },
+
+  _populateOutputs(){
+    const sel = this.els.outputSelect;
+    if(!Engine.supportsSinkSelect()){
+      sel.innerHTML = '<option>System default (use OS sound settings)</option>';
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    sel.innerHTML = '<option value="">System default</option>' +
+      Engine.outputDevices.map(d=>`<option value="${d.deviceId}">${d.label || 'Output device'}</option>`).join('');
+  },
+
+  addTrack(){
+    const t = Engine.addTrack();
+    this.els.strips.appendChild(t.el);
+    t.populateChannelOptions();
+    this._syncEmptyState();
+  },
+
+  confirmRemoveTrack(track){
+    if(Engine.recording){ alert('Stop recording before removing a track.'); return; }
+    Engine.removeTrack(track);
+    this._syncEmptyState();
+  },
+
+  _syncEmptyState(){
+    this.els.emptyState.classList.toggle('hidden', Engine.tracks.length>0);
+  },
+
+  serializeProject(){
+    return {
+      app:'headroom', version:1, savedAt:new Date().toISOString(),
+      interface: Engine.interface ? { deviceId:Engine.interface.deviceId, label:Engine.interface.label } : null,
+      master: { faderDb: this.masterFaderState ? this.masterFaderState.faderDb : 0 },
+      tracks: Engine.tracks.map(t=>({
+        name:t.name, inputChannel:t.inputChannel, trimDb:t.trimDb, pan:t.pan,
+        eq:{ low:t.eq.low, mid:t.eq.mid, high:t.eq.high }, faderDb:t.faderDb,
+        muted:t.muted, solo:t.solo, armed:t.armed
+      }))
+    };
+  },
+
+  saveProject(){
+    const data = this.serializeProject();
+    const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'headroom-project-'+Date.now()+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+  },
+
+  async loadProjectFile(file){
+    if(Engine.recording){ alert('Stop recording before loading a project.'); return; }
+    let data;
+    try{
+      data = JSON.parse(await file.text());
+    }catch(e){ alert('That file could not be read as a Headroom project.'); return; }
+    if(!data || data.app!=='headroom'){ alert("This doesn't look like a Headroom project file."); return; }
+
+    let ifaceMsg = '';
+    if(data.interface){
+      let match = Engine.inputDevices.find(d=>d.deviceId===data.interface.deviceId);
+      if(!match && data.interface.label) match = Engine.inputDevices.find(d=>d.label===data.interface.label);
+      if(match){
+        this.els.interfaceSelect.value = match.deviceId;
+        await Engine.setInterfaceDevice(match.deviceId);
+      }else{
+        ifaceMsg = ' Your saved interface ("'+data.interface.label+'") wasn\'t found \u2014 pick it manually from the Interface list.';
+      }
+    }
+
+    for(const t of [...Engine.tracks]) Engine.removeTrack(t);
+    this._syncEmptyState();
+
+    for(const saved of (data.tracks||[])){
+      const t = Engine.addTrack();
+      this.els.strips.appendChild(t.el);
+      t.name = saved.name || t.name;
+      t.nameInput.value = t.name;
+      t.populateChannelOptions();
+      if(saved.inputChannel!=null && Engine.interface && saved.inputChannel < Engine.interface.channelCount){
+        t.inSelect.value = String(saved.inputChannel);
+        t.setInputChannel(saved.inputChannel);
+      }
+      t.knobControls.trim.setValue(saved.trimDb||0);
+      t.knobControls.pan.setValue(saved.pan||0);
+      t.knobControls.low.setValue((saved.eq&&saved.eq.low)||0);
+      t.knobControls.mid.setValue((saved.eq&&saved.eq.mid)||0);
+      t.knobControls.high.setValue((saved.eq&&saved.eq.high)||0);
+      t.faderControl.setValue(saved.faderDb||0);
+      t.setMuted(!!saved.muted);
+      t.setSolo(!!saved.solo);
+      t.setArmed(!!saved.armed);
+    }
+    this._syncEmptyState();
+
+    if(data.master && this.masterFaderControl) this.masterFaderControl.setValue(data.master.faderDb||0);
+
+    alert('Project loaded.'+ifaceMsg);
+  },
+
+  _buildMasterStrip(){
+    const el = this.els.masterStrip;
+    el.innerHTML = `
+      <div class="strip__head"><input class="strip__name" value="Master" readonly></div>
+      <div class="strip__fader" style="padding-top:16px;">
+        <div class="fader-readout">0.0</div>
+        <div class="fader-track">
+          <div class="fader-unity"></div>
+          <div class="fader-cap"></div>
+        </div>
+      </div>
+      <div class="strip__meter-row">
+        <div style="flex:1; display:flex; flex-direction:column; align-items:center;">
+          <div class="meter-clip"></div>
+          <div class="meter" style="flex:1; align-self:stretch;"><div class="meter__mask"></div></div>
+        </div>
+      </div>
+      <div style="padding:8px; font-size:10px; color:var(--text-faint); text-align:center;">Limiter -1dB</div>
+    `;
+    this.masterFaderCap = el.querySelector('.fader-cap');
+    this.masterFaderTrack = el.querySelector('.fader-track');
+    this.masterFaderReadout = el.querySelector('.fader-readout');
+    this.masterMeterMask = el.querySelector('.meter__mask');
+    this.masterClipLight = el.querySelector('.meter-clip');
+
+    this.masterFaderState = {
+      faderCap:this.masterFaderCap, faderTrack:this.masterFaderTrack, faderReadout:this.masterFaderReadout,
+      faderDb:0, setFaderDb:(db)=>{ rampGain(Engine.masterGain.gain, dbToGain(db), Engine.ctx); }
+    };
+    this.masterFaderControl = this.wireFader(this.masterFaderState);
+  },
+
+  /* ---- generic drag control used for knobs and faders ---- */
+  wireKnob(el, min, max, def, onChange, formatFn){
+    const dial = el.querySelector('.knob__dial');
+    const valEl = el.querySelector('.knob__val');
+    let value = def;
+    const apply = (skipCb)=>{
+      const t = (value-min)/(max-min);
+      dial.style.setProperty('--rot', (-135 + t*270)+'deg');
+      valEl.textContent = formatFn(value);
+      if(!skipCb) onChange(value);
+    };
+    apply(true);
+    let dragStart=null, valueStart=null;
+    const onMove = (clientY)=>{
+      const dy = dragStart - clientY;
+      const range = max-min;
+      const delta = (dy/140)*range;
+      value = clamp(valueStart + delta, min, max);
+      apply();
+    };
+    el.addEventListener('pointerdown', (e)=>{
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      dragStart = e.clientY; valueStart = value;
+    });
+    el.addEventListener('pointermove', (e)=>{ if(dragStart!==null) onMove(e.clientY); });
+    el.addEventListener('pointerup', (e)=>{ dragStart=null; try{el.releasePointerCapture(e.pointerId);}catch(err){} });
+    el.addEventListener('pointercancel', ()=>{ dragStart=null; });
+    el.addEventListener('dblclick', ()=>{ value=def; apply(); });
+    el.addEventListener('wheel', (e)=>{
+      e.preventDefault();
+      const range=max-min;
+      value = clamp(value - Math.sign(e.deltaY)*range*0.02, min, max);
+      apply();
+    }, {passive:false});
+
+    return { setValue(v){ value = clamp(v,min,max); apply(); } };
+  },
+
+  wireFader(target){
+    const cap = target.faderCap, track = target.faderTrack, readout = target.faderReadout;
+    const apply = (db, skipCb)=>{
+      const pos = dbToPos(db);
+      cap.style.bottom = (pos*100)+'%';
+      readout.textContent = formatDb(db);
+      if(!skipCb && target.setFaderDb) target.setFaderDb(db);
+    };
+    apply(target.faderDb!==undefined?target.faderDb:0, true);
+    let dragging=false, startY=0, startDb=0;
+    const start = (e)=>{
+      dragging=true; startY=e.clientY; startDb = target.faderDb!==undefined?target.faderDb:0;
+      track.setPointerCapture(e.pointerId);
+    };
+    const move = (e)=>{
+      if(!dragging) return;
+      const rect = track.getBoundingClientRect();
+      const dy = startY - e.clientY;
+      const deltaPos = dy/rect.height;
+      const db = posToDb(dbToPos(startDb)+deltaPos);
+      target.faderDb = db;
+      apply(db);
+    };
+    const end = (e)=>{ dragging=false; try{track.releasePointerCapture(e.pointerId);}catch(err){} };
+    track.addEventListener('pointerdown', start);
+    track.addEventListener('pointermove', move);
+    track.addEventListener('pointerup', end);
+    track.addEventListener('pointercancel', end);
+    track.addEventListener('wheel', (e)=>{
+      e.preventDefault();
+      const db = clamp((target.faderDb||0) - Math.sign(e.deltaY)*0.8, -60, 6);
+      target.faderDb = db; apply(db);
+    }, {passive:false});
+    track.addEventListener('dblclick', ()=>{ target.faderDb=0; apply(0); });
+
+    return { setValue(db){ target.faderDb = db; apply(db); } };
+  },
+
+  /* ---- metering loop ---- */
+  _meterActive:true,
+  _buf:new Float32Array(1024),
+  _startMeterLoop(){
+    const loop = ()=>{
+      if(this._meterActive){
+        for(const t of Engine.tracks) this._drawMeter(t.nodes.analyser, t.meterMask, t.clipLight, t);
+        this._drawMeter(Engine.masterAnalyser, this.masterMeterMask, this.masterClipLight, null);
+      }
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  },
+  _drawMeter(analyser, maskEl, clipEl, trackRef){
+    if(!analyser || !maskEl) return;
+    const buf = this._buf.length===analyser.fftSize ? this._buf : (this._buf=new Float32Array(analyser.fftSize));
+    analyser.getFloatTimeDomainData(buf);
+    let peak=0;
+    for(let i=0;i<buf.length;i++){ const a=Math.abs(buf[i]); if(a>peak) peak=a; }
+    const db = 20*Math.log10(Math.max(peak,1e-6));
+    const frac = clamp((db - (-60)) / (6-(-60)), 0, 1);
+    maskEl.style.height = ((1-frac)*100)+'%';
+    const now = performance.now();
+    if(peak >= 0.98){
+      const holdUntil = now + 1500;
+      if(trackRef) trackRef._clipUntil = holdUntil; else this._masterClipUntil = holdUntil;
+    }
+    const until = trackRef ? trackRef._clipUntil : this._masterClipUntil;
+    if(clipEl) clipEl.classList.toggle('lit', !!until && now < until);
+  },
+
+  onRecordingsReady(results){
+    for(const r of results){
+      this._recordings.unshift(r);
+      const row = document.createElement('div');
+      row.className = 'rec-row';
+      const secs = (r.frames / Engine.ctx.sampleRate).toFixed(1);
+      row.innerHTML = `<div class="rec-top"><span class="name">${r.name}</span><span class="meta">${secs}s</span></div>`;
+      const audioEl = document.createElement('audio');
+      audioEl.controls = true; audioEl.preload = 'metadata'; audioEl.src = r.url;
+      row.appendChild(audioEl);
+      const a = document.createElement('a');
+      a.href = r.url; a.download = r.name.replace(/\s+/g,'_')+'.wav'; a.textContent = 'Download';
+      row.querySelector('.rec-top').appendChild(a);
+      this.els.recordingsList.prepend(row);
+    }
+    this.els.recCount.textContent = this._recordings.length ? '('+this._recordings.length+')' : '';
+    if(results.length) this.els.recordings.classList.add('open');
+    this.els.recordBtn.textContent = '\u25cf Record';
+    this.els.recordBtn.classList.remove('active');
+    this.els.recordBtn.disabled = false;
+  },
+
+  async toggleRecord(){
+    if(Engine.recording){
+      this.els.recordBtn.disabled = true;
+      this.els.recordBtn.textContent = 'Finishing\u2026';
+      await Engine.stopRecording();
+      return;
+    }
+    const res = await Engine.startRecording();
+    if(!res.ok){ alert(res.msg); return; }
+    this.els.recordBtn.textContent = '\u25a0 Stop';
+    this.els.recordBtn.classList.add('active');
+  }
+};
+
+UI.init();
+</script>
+</body>
+</html>
