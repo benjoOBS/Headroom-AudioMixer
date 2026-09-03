@@ -1,0 +1,22 @@
+# OS cruft
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local dev servers / tooling (in case you add any later)
+node_modules/
+npm-debug.log*
+.env
+.env.local
+
+# Misc local scratch
+*.local
