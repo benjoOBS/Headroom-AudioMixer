@@ -287,8 +287,14 @@
   #boardPanel{ max-width:720px; }
   .board-session{ margin-bottom:18px; }
   .board-session__head{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
     font-size:11px; color:var(--text-faint); margin-bottom:6px; padding-bottom:4px; border-bottom:1px solid var(--line-soft);
   }
+  .board-session__play{
+    background:var(--panel-raised); border:1px solid var(--line); color:var(--accent);
+    font-size:10.5px; padding:4px 10px; border-radius:5px; cursor:pointer; flex:0 0 auto;
+  }
+  .board-session__play.playing{ background:var(--danger); color:#1a1010; border-color:var(--danger); }
   .board-row{
     display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:6px; cursor:pointer;
     border:1px solid transparent; user-select:none;
@@ -1692,6 +1698,7 @@ const UI = {
 
   /* ---- Editing Board: multi-select batch trim/fade across tracks from the same session ---- */
   openBoard(){
+    this._stopSessionPlayback();
     this._renderBoard();
     this.els.boardOverlay.classList.add('open');
   },
@@ -1702,8 +1709,58 @@ const UI = {
     this.els.boardFadeIn.oninput = (e)=>{ this.els.boardFadeInVal.textContent = e.target.value+'ms'; };
     this.els.boardFadeOut.oninput = (e)=>{ this.els.boardFadeOutVal.textContent = e.target.value+'ms'; };
     this.els.boardExportBtn.onclick = ()=> this._exportBoardSelection();
-    this.els.boardClose.onclick = ()=> this.els.boardOverlay.classList.remove('open');
-    this.els.boardOverlay.onclick = (e)=>{ if(e.target===this.els.boardOverlay) this.els.boardOverlay.classList.remove('open'); };
+    this.els.boardClose.onclick = ()=>{ this._stopSessionPlayback(); this.els.boardOverlay.classList.remove('open'); };
+    this.els.boardOverlay.onclick = (e)=>{ if(e.target===this.els.boardOverlay){ this._stopSessionPlayback(); this.els.boardOverlay.classList.remove('open'); } };
+  },
+
+  async _toggleSessionPlayback(sessionId, recs, btnEl){
+    if(this._sessionPlaybackSources && this._sessionPlaybackSources.length){
+      const wasThisSession = this._sessionPlaybackBtn === btnEl;
+      this._stopSessionPlayback();
+      if(wasThisSession) return; // toggled off
+    }
+    this._sessionPlaybackBtn = btnEl;
+    btnEl.textContent = '\u2026 loading';
+    try{
+      await Promise.all(recs.map(async r=>{
+        if(!r.decodedBuffer){
+          const arrBuf = await r.blob.arrayBuffer();
+          r.decodedBuffer = await Engine.ctx.decodeAudioData(arrBuf);
+        }
+      }));
+    }catch(e){
+      btnEl.textContent = '\u25b6 Play all';
+      alert('Could not decode one or more tracks for playback.');
+      return;
+    }
+    const startAt = Engine.ctx.currentTime + 0.08;
+    this._sessionPlaybackSources = [];
+    let maxDur = 0;
+    for(const r of recs){
+      const src = Engine.ctx.createBufferSource();
+      src.buffer = r.decodedBuffer;
+      src.connect(Engine.masterGain);
+      src.start(startAt);
+      this._sessionPlaybackSources.push(src);
+      if(r.decodedBuffer.duration>maxDur) maxDur = r.decodedBuffer.duration;
+    }
+    btnEl.textContent = '\u25a0 Stop';
+    btnEl.classList.add('playing');
+    clearTimeout(this._sessionPlaybackTimer);
+    this._sessionPlaybackTimer = setTimeout(()=>{ this._stopSessionPlayback(); }, (maxDur+0.15)*1000);
+  },
+
+  _stopSessionPlayback(){
+    clearTimeout(this._sessionPlaybackTimer);
+    if(this._sessionPlaybackSources){
+      for(const src of this._sessionPlaybackSources){ try{ src.stop(); }catch(e){} }
+    }
+    this._sessionPlaybackSources = [];
+    if(this._sessionPlaybackBtn){
+      this._sessionPlaybackBtn.textContent = '\u25b6 Play all';
+      this._sessionPlaybackBtn.classList.remove('playing');
+      this._sessionPlaybackBtn = null;
+    }
   },
 
   _renderBoard(){
@@ -1730,7 +1787,14 @@ const UI = {
       sessionEl.className = 'board-session';
       const header = document.createElement('div');
       header.className = 'board-session__head';
-      header.textContent = 'Session ' + sessionId + ' \u2014 ' + recs.length + ' track' + (recs.length>1?'s':'');
+      const headLabel = document.createElement('span');
+      headLabel.textContent = 'Session ' + sessionId + ' \u2014 ' + recs.length + ' track' + (recs.length>1?'s':'');
+      header.appendChild(headLabel);
+      const playBtn = document.createElement('button');
+      playBtn.className = 'board-session__play';
+      playBtn.textContent = '\u25b6 Play all';
+      playBtn.onclick = (e)=>{ e.stopPropagation(); this._toggleSessionPlayback(sessionId, recs, playBtn); };
+      header.appendChild(playBtn);
       sessionEl.appendChild(header);
       for(const r of recs){
         const idx = flatIndex;
